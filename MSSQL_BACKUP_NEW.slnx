@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MssqlBackup.Api/MssqlBackup.Api.csproj" />
+    <Project Path="src/MssqlBackup.Console/MssqlBackup.Console.csproj" />
+    <Project Path="src/MssqlBackup.Shared/MssqlBackup.Shared.csproj" />
+  </Folder>
+</Solution>
