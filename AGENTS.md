@@ -25,10 +25,13 @@ MSSQL_BACKUP_NEW/
     ├── MssqlBackup.Api/              # REST API (.NET 9 web API)
     │   ├── MssqlBackup.Api.csproj
     │   ├── Program.cs
-    │   ├── Controllers/              # Kontrolery API
+    │   ├── Controllers/
+    │   │   └── BackupRecordsController.cs  # CRUD dla historii backupów
     │   ├── Data/
     │   │   ├── AppDbContext.cs       # EF Core DbContext
     │   │   └── Migrations/           # Migracje EF Core
+    │   ├── Models/
+    │   │   └── BackupRecord.cs       # Encja historii backupów
     │   ├── appsettings.json
     │   └── appsettings.Development.json
     └── MssqlBackup.Console/          # Aplikacja konsolowa (.NET 9 console)
@@ -90,6 +93,28 @@ var config = new BackupConfiguration
 
 var result = await orchestrator.BackupAllDatabasesAsync(server, config);
 ```
+
+## API Architecture
+
+### BackupRecordsController
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/backuprecords` | Lista (filtry: environment, instance, database, from, to) |
+| GET | `/api/backuprecords/latest` | Ostatni backup każdej bazy |
+| GET | `/api/backuprecords/{id}` | Pojedynczy rekord |
+| POST | `/api/backuprecords` | Utwórz |
+| PUT | `/api/backuprecords/{id}` | Aktualizuj |
+| DELETE | `/api/backuprecords/{id}` | Usuń |
+
+### BackupRecord Model
+- EnvironmentName, InstanceName, DatabaseName, BackupType
+- OutputFilePath, FileSize, BackupDate
+- Compress, Verify, Duration
+
+### Konfiguracja
+- **CORS**: AllowAnyOrigin (dla instancji konsolowych na VPS)
+- **AutoMigrate**: Automatyczna migracja przy starcie
 
 ## Development
 
