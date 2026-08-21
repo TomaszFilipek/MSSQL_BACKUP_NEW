@@ -1,7 +1,10 @@
 # AGENTS.md
 
 ## Repository instruction
-Pokażdej zmianie wykonaj commit wszystkich zmian, z odpowiednim opisem
+Po każdej zmianie wykonaj commit wszystkich zmian, z odpowiednim opisem
+
+## Project change
+Po każdej zmianie aktualizuj AGENTS.md
 
 ## Project Overview
 
