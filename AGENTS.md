@@ -1,5 +1,8 @@
 # AGENTS.md
 
+## Repository instruction
+Pokażdej zmianie wykonaj commit wszystkich zmian, z odpowiednim opisem
+
 ## Project Overview
 
 MSSQL_BACKUP_NEW - projekt do zarządzania kopiami zapasowymi baz danych MSSQL.
@@ -27,7 +30,17 @@ MSSQL_BACKUP_NEW/
     │   └── appsettings.Development.json
     └── MssqlBackup.Console/          # Aplikacja konsolowa (.NET 9 console)
         ├── MssqlBackup.Console.csproj
-        └── Program.cs
+        ├── Program.cs
+        ├── Models/
+        │   ├── BackupType.cs         # enum: Full, Differential
+        │   ├── BackupOptions.cs      # Parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
+        │   ├── BackupConfiguration.cs # Konfiguracja orchestratora (OutputDirectory, ExcludeDatabases)
+        │   ├── ServerConnection.cs   # Dane połączenia z serwerem SQL
+        │   ├── BackupResult.cs       # Wynik operacji backupu
+        │   └── BackupError.cs        # Informacja o błędzie
+        └── Services/
+            ├── BackupService.cs      # Wykonywanie backupów (BACKUP DATABASE)
+            └── BackupOrchestrator.cs # Orchestration backupu wszystkich baz
 ```
 
 ## Key Technical Decisions
@@ -38,14 +51,42 @@ MSSQL_BACKUP_NEW/
 - **Namespace**: MssqlBackup.*
 - **API**: Kontrollery (nie Minimal API)
 - **Konfiguracja**: appsettings.json + appsettings.Development.json
+- **Backup SQL**: Microsoft.Data.SqlClient + BACKUP DATABASE
 
 ## Dependencies
 
 | Project | References | NuGet Packages |
 |---------|-----------|----------------|
 | MssqlBackup.Shared | — | — |
-| MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection |
+| MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Data.SqlClient |
 | MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.SqlServer, Microsoft.EntityFrameworkCore.Design |
+
+## Console App Architecture
+
+### Kluczowe klasy
+- **BackupService** - wykonuje backupy pojedynczych baz (BACKUP DATABASE)
+- **BackupOrchestrator** - orchestruje backup wszystkich baz na serwerze
+- **ServerConnection** - dane połączenia (Server, Username, Password, UseWindowsAuth)
+- **BackupConfiguration** - konfiguracja backupu (OutputDirectory, ExcludeDatabases, Compress, Verify)
+- **BackupOptions** - parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
+- **BackupResult** - wynik operacji (TotalDatabases, SuccessfulBackups, FailedBackups, Errors)
+
+### Przykład użycia
+```csharp
+var orchestrator = serviceProvider.GetRequiredService<BackupOrchestrator>();
+
+var server = new ServerConnection { Server = @".\SQLEXPRESS", UseWindowsAuth = true };
+var config = new BackupConfiguration
+{
+    OutputDirectory = @"C:\Backups\MSSQL",
+    DefaultType = BackupType.Full,
+    Compress = true,
+    Verify = true,
+    ExcludeDatabases = ["master", "model", "msdb", "tempdb"]
+};
+
+var result = await orchestrator.BackupAllDatabasesAsync(server, config);
+```
 
 ## Development
 
@@ -78,3 +119,6 @@ dotnet ef database update --project src/MssqlBackup.Api
 - Aplikacja konsolowa korzysta z innej bazy danych niż REST API
 - Migracje EF Core znajdują się w projekcie API (Data/Migrations/)
 - Połączenie z bazą danych jest konfigurowane przez appsettings.json
+- BackupOrchestrator pomija domyślnie bazy systemowe (master, model, msdb, tempdb)
+- Pliki backupów są zapisywane w podkatalogach datowych (yyyy-MM-dd/)
+- Błędy podczas backupu pojedynczych baz są logowane, a operacja jest kontynuowana

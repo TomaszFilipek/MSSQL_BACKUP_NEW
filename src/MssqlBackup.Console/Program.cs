@@ -18,10 +18,11 @@ services.AddLogging(builder =>
     builder.SetMinimumLevel(LogLevel.Information);
 });
 services.AddTransient<BackupService>();
+services.AddTransient<BackupOrchestrator>();
 
 var serviceProvider = services.BuildServiceProvider();
 
-var backupService = serviceProvider.GetRequiredService<BackupService>();
+var orchestrator = serviceProvider.GetRequiredService<BackupOrchestrator>();
 
 var server = new ServerConnection
 {
@@ -29,11 +30,34 @@ var server = new ServerConnection
     UseWindowsAuth = true
 };
 
-Console.WriteLine("MssqlBackup.Console started");
-Console.WriteLine("Available databases:");
-
-var databases = await backupService.GetDatabasesAsync(server);
-foreach (var db in databases)
+var config = new BackupConfiguration
 {
-    Console.WriteLine($"  - {db}");
+    OutputDirectory = @"C:\Backups\MSSQL",
+    DefaultType = BackupType.Full,
+    Compress = true,
+    Verify = true,
+    ExcludeDatabases = ["master", "model", "msdb", "tempdb"]
+};
+
+Console.WriteLine("MssqlBackup.Console - Backup Orchestrator");
+Console.WriteLine($"Server: {server.Server}");
+Console.WriteLine($"Output: {config.OutputDirectory}");
+Console.WriteLine();
+
+var result = await orchestrator.BackupAllDatabasesAsync(server, config);
+
+Console.WriteLine();
+Console.WriteLine("=== Backup Summary ===");
+Console.WriteLine($"Total databases: {result.TotalDatabases}");
+Console.WriteLine($"Successful: {result.SuccessfulBackups}");
+Console.WriteLine($"Failed: {result.FailedBackups}");
+
+if (result.Errors.Count > 0)
+{
+    Console.WriteLine();
+    Console.WriteLine("Errors:");
+    foreach (var error in result.Errors)
+    {
+        Console.WriteLine($"  - {error.DatabaseName}: {error.ErrorMessage}");
+    }
 }
