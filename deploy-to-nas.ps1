@@ -123,7 +123,7 @@ Write-OK "Polaczenie SSH OK"
 
 # Wyczysc stare pliki zrodlowe na NAS (zapobiega duplikatom i starym plikom)
 Write-Host "    >> Czyszcze katalog zrodlowy na NAS..." -ForegroundColor DarkGray
-& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "rm -rf `"$NAS_ROOT/src`" && rm -f `"$NAS_ROOT/Dockerfile`" && rm -f `"$NAS_ROOT/docker-compose.yml`" && rm -f `"$NAS_ROOT/.dockerignore`" && rm -f `"$NAS_ROOT/MSSQL_BACKUP_NEW.slnx`""
+& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "rm -rf `"$NAS_ROOT/src`" && rm -f `"$NAS_ROOT/Dockerfile`" && rm -f `"$NAS_ROOT/docker-compose.yml`" && rm -f `"$NAS_ROOT/.dockerignore`" && rm -f `"$NAS_ROOT/MSSQL_BACKUP_NEW.slnx`" && mkdir -p `"$NAS_ROOT/src`""
 
 # Skopiuj Dockerfile, docker-compose.yml, .dockerignore i plik rozwiazania
 Write-Host "    >> Kopiowanie plikow głównych..." -ForegroundColor DarkGray
