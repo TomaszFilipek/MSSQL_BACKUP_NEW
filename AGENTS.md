@@ -65,7 +65,7 @@ MSSQL_BACKUP_NEW/
 |---------|-----------|----------------|
 | MssqlBackup.Shared | — | — |
 | MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Data.SqlClient |
-| MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.SqlServer, Microsoft.EntityFrameworkCore.Design |
+| MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.SqlServer, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore |
 
 ## Console App Architecture
 
@@ -115,6 +115,7 @@ var result = await orchestrator.BackupAllDatabasesAsync(server, config);
 ### Konfiguracja
 - **CORS**: AllowAnyOrigin (dla instancji konsolowych na VPS)
 - **AutoMigrate**: Automatyczna migracja przy starcie
+- **API Documentation**: Scalar (zamiast Swagger UI) - dostępne pod `/scalar/v1` w trybie Development
 
 ## Development
 
