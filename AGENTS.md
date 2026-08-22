@@ -37,16 +37,20 @@ MSSQL_BACKUP_NEW/
     └── MssqlBackup.Console/          # Aplikacja konsolowa (.NET 9 console)
         ├── MssqlBackup.Console.csproj
         ├── Program.cs
+        ├── appsettings.json           # Konfiguracja API (BaseUrl, EnvironmentName)
         ├── Models/
-        │   ├── BackupType.cs         # enum: Full, Differential
-        │   ├── BackupOptions.cs      # Parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
+        │   ├── BackupType.cs          # enum: Full, Differential
+        │   ├── BackupOptions.cs       # Parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
         │   ├── BackupConfiguration.cs # Konfiguracja orchestratora (OutputDirectory, ExcludeDatabases)
-        │   ├── ServerConnection.cs   # Dane połączenia z serwerem SQL
-        │   ├── BackupResult.cs       # Wynik operacji backupu
-        │   └── BackupError.cs        # Informacja o błędzie
+        │   ├── ServerConnection.cs    # Dane połączenia z serwerem SQL
+        │   ├── BackupResult.cs        # Wynik operacji backupu
+        │   ├── BackupError.cs         # Informacja o błędzie
+        │   ├── ApiSettings.cs         # Ustawienia API (BaseUrl, EnvironmentName)
+        │   └── BackupRecordDto.cs     # DTO do komunikacji z API
         └── Services/
-            ├── BackupService.cs      # Wykonywanie backupów (BACKUP DATABASE)
-            └── BackupOrchestrator.cs # Orchestration backupu wszystkich baz
+            ├── BackupService.cs       # Wykonywanie backupów (BACKUP DATABASE)
+            ├── BackupOrchestrator.cs  # Orchestration backupu wszystkich baz
+            └── BackupApiClient.cs     # Klient HTTP do wysyłania rekordów do API
 ```
 
 ## Key Technical Decisions
@@ -64,7 +68,7 @@ MSSQL_BACKUP_NEW/
 | Project | References | NuGet Packages |
 |---------|-----------|----------------|
 | MssqlBackup.Shared | — | — |
-| MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Data.SqlClient |
+| MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Extensions.Http, Microsoft.Data.SqlClient |
 | MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.SqlServer, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore |
 
 ## Console App Architecture
@@ -72,10 +76,12 @@ MSSQL_BACKUP_NEW/
 ### Kluczowe klasy
 - **BackupService** - wykonuje backupy pojedynczych baz (BACKUP DATABASE)
 - **BackupOrchestrator** - orchestruje backup wszystkich baz na serwerze
+- **BackupApiClient** - klient HTTP do wysyłania rekordów do REST API
 - **ServerConnection** - dane połączenia (Server, Username, Password, UseWindowsAuth)
 - **BackupConfiguration** - konfiguracja backupu (OutputDirectory, ExcludeDatabases, Compress, Verify)
 - **BackupOptions** - parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
 - **BackupResult** - wynik operacji (TotalDatabases, SuccessfulBackups, FailedBackups, Errors)
+- **ApiSettings** - ustawienia API (BaseUrl, EnvironmentName)
 
 ### Przykład użycia
 ```csharp
@@ -91,7 +97,7 @@ var config = new BackupConfiguration
     ExcludeDatabases = ["master", "model", "msdb", "tempdb"]
 };
 
-var result = await orchestrator.BackupAllDatabasesAsync(server, config);
+var result = await orchestrator.BackupAllDatabasesAsync(server, config, environmentName: "Production");
 ```
 
 ## API Architecture
