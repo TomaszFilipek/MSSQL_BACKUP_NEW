@@ -46,11 +46,13 @@ MSSQL_BACKUP_NEW/
         │   ├── BackupResult.cs        # Wynik operacji backupu
         │   ├── BackupError.cs         # Informacja o błędzie
         │   ├── ApiSettings.cs         # Ustawienia API (BaseUrl, EnvironmentName)
-        │   └── BackupRecordDto.cs     # DTO do komunikacji z API
+        │   ├── BackupRecordDto.cs     # DTO do komunikacji z API
+        │   └── CompressionSettings.cs # Ustawienia kompresji (Compress, Password, CompressionLevel)
         └── Services/
             ├── BackupService.cs       # Wykonywanie backupów (BACKUP DATABASE)
             ├── BackupOrchestrator.cs  # Orchestration backupu wszystkich baz
-            └── BackupApiClient.cs     # Klient HTTP do wysyłania rekordów do API
+            ├── BackupApiClient.cs     # Klient HTTP do wysyłania rekordów do API
+            └── CompressionService.cs  # Kompresja plików 7-Zip (z obsługą hasła)
 ```
 
 ## Key Technical Decisions
@@ -77,11 +79,13 @@ MSSQL_BACKUP_NEW/
 - **BackupService** - wykonuje backupy pojedynczych baz (BACKUP DATABASE)
 - **BackupOrchestrator** - orchestruje backup wszystkich baz na serwerze
 - **BackupApiClient** - klient HTTP do wysyłania rekordów do REST API
+- **CompressionService** - kompresja plików 7-Zip (z obsługą hasła)
 - **ServerConnection** - dane połączenia (Server, Username, Password, UseWindowsAuth)
-- **BackupConfiguration** - konfiguracja backupu (OutputDirectory, ExcludeDatabases, Compress, Verify)
+- **BackupConfiguration** - konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify)
 - **BackupOptions** - parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
 - **BackupResult** - wynik operacji (TotalDatabases, SuccessfulBackups, FailedBackups, Errors)
 - **ApiSettings** - ustawienia API (BaseUrl, EnvironmentName)
+- **CompressionSettings** - ustawienia kompresji (Compress, Password, CompressionLevel)
 
 ### Przykład użycia
 ```csharp
@@ -94,7 +98,13 @@ var config = new BackupConfiguration
     DefaultType = BackupType.Full,
     Compress = true,
     Verify = true,
-    ExcludeDatabases = ["master", "model", "msdb", "tempdb"]
+    ExcludeDatabases = ["master", "model", "msdb", "tempdb"],
+    PostBackupCompression = new CompressionSettings
+    {
+        Compress = true,
+        Password = "MySecretPassword123",
+        CompressionLevel = "Normal"
+    }
 };
 
 var result = await orchestrator.BackupAllDatabasesAsync(server, config, environmentName: "Production");
