@@ -159,6 +159,52 @@ dotnet ef migrations add <MigrationName> --project src/MssqlBackup.Api
 dotnet ef database update --project src/MssqlBackup.Api
 ```
 
+## Docker
+
+### Struktura plików Docker
+```
+MSSQL_BACKUP_NEW/
+├── Dockerfile              # Multi-stage build dla API
+├── docker-compose.yml      # API + SQL Server
+├── .dockerignore           # Wykluczenia z kontekstu buildu
+└── .env                    # Zmienne środowiskowe (SA_PASSWORD)
+```
+
+### Uruchomienie na VPS
+```bash
+# 1. Sklonuj repozytorium
+git clone <repo-url>
+cd MSSQL_BACKUP_NEW
+
+# 2. Utwórz plik .env z hasłem SA
+echo "SA_PASSWORD=YourStrong!Password123" > .env
+
+# 3. Zbuduj i uruchom
+docker compose up -d --build
+
+# 4. Sprawdź status
+docker compose ps
+docker compose logs api
+```
+
+### Endpoints po uruchomieniu
+- API: `http://<VPS_IP>:5000`
+- Scalar API Docs: `http://<VPS_IP>:5000/scalar/v1` (w trybie Development)
+- SQL Server: `localhost:1433` (zewnętrznie)
+
+### Zarządzanie
+```bash
+# Zatrzymanie
+docker compose down
+
+# Usunięcie z danymi
+docker compose down -v
+
+# Logi
+docker compose logs -f api
+docker compose logs -f mssql
+```
+
 ## Notes
 
 - Aplikacja konsolowa korzysta z innej bazy danych niż REST API
@@ -167,3 +213,5 @@ dotnet ef database update --project src/MssqlBackup.Api
 - BackupOrchestrator pomija domyślnie bazy systemowe (master, model, msdb, tempdb)
 - Pliki backupów są zapisywane w podkatalogach datowych (yyyy-MM-dd/)
 - Błędy podczas backupu pojedynczych baz są logowane, a operacja jest kontynuowana
+- W Dockerze API nasłuchuje na porcie 5000 (HTTP)
+- SQL Server w Dockerze używa domyślnie hasła z pliku .env

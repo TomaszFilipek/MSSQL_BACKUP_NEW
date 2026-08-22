@@ -30,7 +30,10 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors();
 
-app.UseHttpsRedirection();
+if (app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseAuthorization();
 
@@ -39,7 +42,28 @@ app.MapControllers();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    dbContext.Database.Migrate();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    var retries = 10;
+    for (var i = 0; i < retries; i++)
+    {
+        try
+        {
+            dbContext.Database.Migrate();
+            logger.LogInformation("Database migration completed successfully");
+            break;
+        }
+        catch (Exception ex)
+        {
+            if (i == retries - 1)
+            {
+                logger.LogCritical(ex, "Failed to connect to database after {Retries} attempts", retries);
+                throw;
+            }
+            logger.LogWarning(ex, "Attempt {Attempt}/{Retries} - SQL Server not ready, waiting 5s...", i + 1, retries);
+            await Task.Delay(5000);
+        }
+    }
 }
 
 app.Run();
