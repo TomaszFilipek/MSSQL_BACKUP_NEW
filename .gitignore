@@ -390,3 +390,6 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Environment variables (secrets)
+.env

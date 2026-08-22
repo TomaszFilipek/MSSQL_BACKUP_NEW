@@ -1,15 +1,15 @@
 ﻿# =============================================================================
 #  deploy-to-nas.ps1
-#  Kopiuje projekt na NAS (bez artefaktow build) i przebudowuje kontenery Docker
+#  Kopiuje projekt MSSQL_BACKUP_NEW na NAS (bez artefaktow build) i przebudowuje
+#  kontenery Docker
 # =============================================================================
 
 $NAS_IP   = "192.168.1.2"
 $NAS_USER = "tomasz"
 $NAS_PASS = "Wronski_Nas_2022"
-$NAS_ROOT = "/volume1/TOMASZ/YTScriptTracker"             # katalog z Dockerfile i docker-compose.yml
-$NAS_PATH = "$NAS_ROOT/YTScriptTracker"                   # katalog z kodem C#
+$NAS_ROOT = "/volume1/TOMASZ/MSSQL_BACKUP_NEW"
 
-$LOCAL_SOURCE = Join-Path $PSScriptRoot "YTScriptTracker"
+$LOCAL_SOURCE = $PSScriptRoot
 
 # ---------------------------------------------------------------------------
 #  Funkcje pomocnicze
@@ -69,7 +69,7 @@ Write-OK "pscp  : $pscp"
 
 Write-Step "Przygotowuje czysta kopie projektu..."
 
-$tempDir = Join-Path $env:TEMP "YTScriptTracker_deploy"
+$tempDir = Join-Path $env:TEMP "MSSQL_BACKUP_NEW_deploy"
 
 if (Test-Path $tempDir) {
     Remove-Item $tempDir -Recurse -Force
@@ -77,13 +77,11 @@ if (Test-Path $tempDir) {
 New-Item -ItemType Directory -Path $tempDir | Out-Null
 
 $excludeDirs = @(
-    "node_modules", "dist", ".angular",
-    "bin", "obj",
-    ".git", ".vs", ".vscode", ".github",
-    ".idea"
+    ".git", ".vs", ".vscode", ".github", ".idea",
+    "bin", "obj", "publish"
 )
 
-$excludeFiles = @("*.user", "*.suo", "Thumbs.db", ".DS_Store")
+$excludeFiles = @("*.user", "*.suo", "Thumbs.db", ".DS_Store", "*.cache", "*.vsidx", "*.dtbcache.v2")
 
 $robocopyArgs = @(
     $LOCAL_SOURCE,
@@ -112,9 +110,9 @@ Write-Host "    Pliki do transferu: $fileCount" -ForegroundColor DarkGray
 #  Wyczysc katalog docelowy na NAS i skopiuj pliki
 # ---------------------------------------------------------------------------
 
-Write-Step "Przesylam pliki na NAS ($NAS_USER@${NAS_IP}:$NAS_PATH)..."
+Write-Step "Przesylam pliki na NAS ($NAS_USER@${NAS_IP}:$NAS_ROOT)..."
 
-$sshClean = "mkdir -p `"$NAS_PATH`" && mkdir -p `"$NAS_ROOT/Data`""
+$sshClean = "mkdir -p `"$NAS_ROOT`""
 
 & $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" $sshClean
 if ($LASTEXITCODE -ne 0) {
@@ -123,21 +121,20 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-OK "Polaczenie SSH OK"
 
-# Wyczysc stare pliki zrodlowe na NAS (zapobiega duplikatom i starym plikoem)
+# Wyczysc stare pliki zrodlowe na NAS (zapobiega duplikatom i starym plikom)
 Write-Host "    >> Czyszcze katalog zrodlowy na NAS..." -ForegroundColor DarkGray
-& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "rm -rf `"$NAS_PATH`" && mkdir -p `"$NAS_PATH`""
+& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "rm -rf `"$NAS_ROOT/src`" && rm -f `"$NAS_ROOT/Dockerfile`" && rm -f `"$NAS_ROOT/docker-compose.yml`" && rm -f `"$NAS_ROOT/.dockerignore`" && rm -f `"$NAS_ROOT/MSSQL_BACKUP_NEW.slnx`""
 
-# Skopiuj Dockerfile i docker-compose.yml do katalogu nadrzednego na NAS
-Write-Host "    >> Kopiowanie Dockerfile i docker-compose.yml..." -ForegroundColor DarkGray
-& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "Dockerfile")          "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/Dockerfile"
-& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "docker-compose.yml")  "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/docker-compose.yml"
+# Skopiuj Dockerfile, docker-compose.yml, .dockerignore i plik rozwiazania
+Write-Host "    >> Kopiowanie plikow głównych..." -ForegroundColor DarkGray
+& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "Dockerfile")              "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/Dockerfile"
+& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "docker-compose.yml")      "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/docker-compose.yml"
+& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot ".dockerignore")           "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/.dockerignore"
+& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "MSSQL_BACKUP_NEW.slnx")  "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/MSSQL_BACKUP_NEW.slnx"
 
-# Skopiuj core script PS do katalogu Data na NAS (tam trafi do wolumenu Dockera)
-Write-Host "    >> Kopiowanie YT-core.ps1 do Data na NAS..." -ForegroundColor DarkGray
-& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "SH\YT-core.ps1") "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/Data/yt-core.ps1"
-
-# Skopiuj kod C# do podkatalogu YTScriptTracker
-& $pscp -pw $NAS_PASS -r -batch "$tempDir\*" "${NAS_USER}@${NAS_IP}:${NAS_PATH}"
+# Skopiuj kod zrodlowy (src/)
+Write-Host "    >> Kopiowanie kodu zrodlowego (src/)..." -ForegroundColor DarkGray
+& $pscp -pw $NAS_PASS -r -batch "$tempDir\src\*" "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/src/"
 if ($LASTEXITCODE -ne 0) {
     Write-Fail "Blad podczas kopiowania plikow na NAS."
     exit 1
@@ -158,27 +155,31 @@ set -e
 export PATH=/usr/local/bin:/usr/bin:/bin:`$PATH
 
 COMPOSE_FILE="$NAS_ROOT/docker-compose.yml"
+ENV_FILE="$NAS_ROOT/.env"
+
+echo ">>> Tworzenie pliku .env..."
+cat > "`$ENV_FILE" << 'ENVEOF'
+SA_PASSWORD=YourStrong!Password123
+ENVEOF
 
 echo ">>> Zatrzymywanie kontenerow..."
 docker-compose -f "`$COMPOSE_FILE" down --remove-orphans
-
-mkdir -p "$NAS_ROOT/Data"
 
 echo ">>> Budowanie obrazow (bez cache)..."
 docker-compose -f "`$COMPOSE_FILE" build --no-cache
 
 echo ">>> Uruchamianie kontenerow..."
-docker-compose -f "`$COMPOSE_FILE" up -d
+docker-compose -f "`$COMPOSE_FILE" --env-file "`$ENV_FILE" up -d
 
 echo ">>> Status kontenerow:"
-docker-compose -f "`$COMPOSE_FILE" ps
+docker-compose -f "`$COMPOSE_FILE" --env-file "`$ENV_FILE" ps
 "@
 
-$deployScriptLocal = Join-Path $env:TEMP "YTScriptTracker_deploy.sh"
+$deployScriptLocal = Join-Path $env:TEMP "MSSQL_BACKUP_NEW_deploy.sh"
 [System.IO.File]::WriteAllText($deployScriptLocal, $deployScript.Replace("`r`n", "`n"))
 
 Write-Host "    >> Kopiowanie skryptu deploy na NAS..." -ForegroundColor DarkGray
-& $pscp -pw $NAS_PASS -batch $deployScriptLocal "${NAS_USER}@${NAS_IP}:/tmp/YTScriptTracker_deploy.sh"
+& $pscp -pw $NAS_PASS -batch $deployScriptLocal "${NAS_USER}@${NAS_IP}:/tmp/MSSQL_BACKUP_NEW_deploy.sh"
 if ($LASTEXITCODE -ne 0) {
     Write-Fail "Nie mozna skopiowac skryptu na NAS."
     exit 1
@@ -186,7 +187,7 @@ if ($LASTEXITCODE -ne 0) {
 Remove-Item $deployScriptLocal -Force
 
 Write-Host "    >> Uruchamianie Docker build na NAS..." -ForegroundColor DarkGray
-& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "echo '$NAS_PASS' | sudo -S bash /tmp/YTScriptTracker_deploy.sh; EXIT_CODE=`$?; rm -f /tmp/YTScriptTracker_deploy.sh; exit `$EXIT_CODE"
+& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "echo '$NAS_PASS' | sudo -S bash /tmp/MSSQL_BACKUP_NEW_deploy.sh; EXIT_CODE=`$?; rm -f /tmp/MSSQL_BACKUP_NEW_deploy.sh; exit `$EXIT_CODE"
 if ($LASTEXITCODE -ne 0) {
     Write-Fail "Blad podczas przebudowy Docker na NAS (exit code $LASTEXITCODE)."
     exit 1
@@ -201,5 +202,6 @@ Remove-Item $tempDir -Recurse -Force
 Write-OK "Gotowe!"
 
 Write-Host ""
-Write-Host "  Aplikacja dostepna pod: http://${NAS_IP}:8086" -ForegroundColor Magenta
+Write-Host "  API:        http://${NAS_IP}:8283" -ForegroundColor Magenta
+Write-Host "  SQL Server: ${NAS_IP}:8284" -ForegroundColor Magenta
 Write-Host ""

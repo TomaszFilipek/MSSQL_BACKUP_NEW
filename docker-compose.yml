@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: mssqlbackup-api
     ports:
-      - "5000:5000"
+      - "8283:5000"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Server=mssql;Database=MssqlBackup;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True
@@ -22,7 +22,7 @@ services:
       - MSSQL_SA_PASSWORD=${SA_PASSWORD}
       - MSSQL_PID=Developer
     ports:
-      - "1433:1433"
+      - "8284:1433"
     volumes:
       - mssql-data:/var/opt/mssql
     healthcheck:
