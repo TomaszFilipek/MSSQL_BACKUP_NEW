@@ -13,4 +13,5 @@ public class BackupConfiguration
         "msdb",
         "tempdb"
     ];
+    public CompressionSettings PostBackupCompression { get; init; } = new();
 }

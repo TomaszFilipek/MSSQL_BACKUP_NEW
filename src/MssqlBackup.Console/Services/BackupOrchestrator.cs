@@ -8,12 +8,18 @@ public class BackupOrchestrator
 {
     private readonly BackupService _backupService;
     private readonly BackupApiClient _apiClient;
+    private readonly CompressionService _compressionService;
     private readonly ILogger<BackupOrchestrator> _logger;
 
-    public BackupOrchestrator(BackupService backupService, BackupApiClient apiClient, ILogger<BackupOrchestrator> logger)
+    public BackupOrchestrator(
+        BackupService backupService,
+        BackupApiClient apiClient,
+        CompressionService compressionService,
+        ILogger<BackupOrchestrator> logger)
     {
         _backupService = backupService;
         _apiClient = apiClient;
+        _compressionService = compressionService;
         _logger = logger;
     }
 
@@ -53,10 +59,15 @@ public class BackupOrchestrator
                 };
 
                 await _backupService.BackupAsync(server, options);
-                stopwatch.Stop();
-                result.SuccessfulBackups++;
-
                 _logger.LogInformation("Backup of database '{Database}' completed successfully", database);
+
+                if (config.PostBackupCompression.Compress)
+                {
+                    await _compressionService.CompressFileAsync(outputPath, config.PostBackupCompression);
+                    _logger.LogInformation("Compression of backup '{Database}' completed successfully", database);
+                }
+
+                stopwatch.Stop();
 
                 var fileInfo = new FileInfo(outputPath);
                 var record = new BackupRecordDto
@@ -65,15 +76,16 @@ public class BackupOrchestrator
                     InstanceName = server.Server,
                     DatabaseName = database,
                     BackupType = config.DefaultType.ToString(),
-                    OutputFilePath = outputPath,
+                    OutputFilePath = config.PostBackupCompression.Compress ? outputPath + ".7z" : outputPath,
                     FileSize = fileInfo.Exists ? fileInfo.Length : 0,
                     BackupDate = DateTime.Now,
-                    Compress = config.Compress,
+                    Compress = config.Compress || config.PostBackupCompression.Compress,
                     Verify = config.Verify,
                     Duration = stopwatch.Elapsed
                 };
 
                 await _apiClient.SendBackupRecordAsync(record);
+                result.SuccessfulBackups++;
             }
             catch (Exception ex)
             {

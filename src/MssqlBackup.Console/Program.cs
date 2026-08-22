@@ -25,6 +25,7 @@ services.AddHttpClient<BackupApiClient>(client =>
     client.BaseAddress = new Uri(apiSettings.BaseUrl);
 });
 services.AddTransient<BackupService>();
+services.AddTransient<CompressionService>();
 services.AddTransient<BackupOrchestrator>();
 
 var serviceProvider = services.BuildServiceProvider();
@@ -43,7 +44,13 @@ var config = new BackupConfiguration
     DefaultType = BackupType.Full,
     Compress = true,
     Verify = true,
-    ExcludeDatabases = ["master", "model", "msdb", "tempdb"]
+    ExcludeDatabases = ["master", "model", "msdb", "tempdb"],
+    PostBackupCompression = new CompressionSettings
+    {
+        Compress = true,
+        Password = "MySecretPassword123",
+        CompressionLevel = "Normal"
+    }
 };
 
 Console.WriteLine("MssqlBackup.Console - Backup Orchestrator");
@@ -51,6 +58,7 @@ Console.WriteLine($"Server: {server.Server}");
 Console.WriteLine($"Output: {config.OutputDirectory}");
 Console.WriteLine($"Environment: {apiSettings.EnvironmentName}");
 Console.WriteLine($"API: {apiSettings.BaseUrl}");
+Console.WriteLine($"Post-backup compression: {config.PostBackupCompression.Compress}");
 Console.WriteLine();
 
 var result = await orchestrator.BackupAllDatabasesAsync(server, config, apiSettings.EnvironmentName);
