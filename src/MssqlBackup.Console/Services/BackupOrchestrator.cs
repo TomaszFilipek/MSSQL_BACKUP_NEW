@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using MssqlBackup.Console.Models;
 
@@ -6,15 +7,17 @@ namespace MssqlBackup.Console.Services;
 public class BackupOrchestrator
 {
     private readonly BackupService _backupService;
+    private readonly BackupApiClient _apiClient;
     private readonly ILogger<BackupOrchestrator> _logger;
 
-    public BackupOrchestrator(BackupService backupService, ILogger<BackupOrchestrator> logger)
+    public BackupOrchestrator(BackupService backupService, BackupApiClient apiClient, ILogger<BackupOrchestrator> logger)
     {
         _backupService = backupService;
+        _apiClient = apiClient;
         _logger = logger;
     }
 
-    public async Task<BackupResult> BackupAllDatabasesAsync(ServerConnection server, BackupConfiguration config)
+    public async Task<BackupResult> BackupAllDatabasesAsync(ServerConnection server, BackupConfiguration config, string environmentName)
     {
         _logger.LogInformation("Starting backup of all databases on server '{Server}'", server.Server);
 
@@ -28,6 +31,8 @@ public class BackupOrchestrator
 
         foreach (var database in databasesToBackup)
         {
+            var stopwatch = Stopwatch.StartNew();
+
             try
             {
                 var outputPath = BuildOutputPath(config.OutputDirectory, database);
@@ -48,12 +53,31 @@ public class BackupOrchestrator
                 };
 
                 await _backupService.BackupAsync(server, options);
+                stopwatch.Stop();
                 result.SuccessfulBackups++;
 
                 _logger.LogInformation("Backup of database '{Database}' completed successfully", database);
+
+                var fileInfo = new FileInfo(outputPath);
+                var record = new BackupRecordDto
+                {
+                    EnvironmentName = environmentName,
+                    InstanceName = server.Server,
+                    DatabaseName = database,
+                    BackupType = config.DefaultType.ToString(),
+                    OutputFilePath = outputPath,
+                    FileSize = fileInfo.Exists ? fileInfo.Length : 0,
+                    BackupDate = DateTime.Now,
+                    Compress = config.Compress,
+                    Verify = config.Verify,
+                    Duration = stopwatch.Elapsed
+                };
+
+                await _apiClient.SendBackupRecordAsync(record);
             }
             catch (Exception ex)
             {
+                stopwatch.Stop();
                 result.FailedBackups++;
                 result.Errors.Add(new BackupError
                 {

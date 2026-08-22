@@ -10,12 +10,19 @@ var configuration = new ConfigurationBuilder()
     .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
     .Build();
 
+var apiSettings = new ApiSettings();
+configuration.GetSection("ApiSettings").Bind(apiSettings);
+
 var services = new ServiceCollection();
 services.AddSingleton<IConfiguration>(configuration);
 services.AddLogging(builder =>
 {
     builder.AddConsole();
     builder.SetMinimumLevel(LogLevel.Information);
+});
+services.AddHttpClient<BackupApiClient>(client =>
+{
+    client.BaseAddress = new Uri(apiSettings.BaseUrl);
 });
 services.AddTransient<BackupService>();
 services.AddTransient<BackupOrchestrator>();
@@ -42,9 +49,11 @@ var config = new BackupConfiguration
 Console.WriteLine("MssqlBackup.Console - Backup Orchestrator");
 Console.WriteLine($"Server: {server.Server}");
 Console.WriteLine($"Output: {config.OutputDirectory}");
+Console.WriteLine($"Environment: {apiSettings.EnvironmentName}");
+Console.WriteLine($"API: {apiSettings.BaseUrl}");
 Console.WriteLine();
 
-var result = await orchestrator.BackupAllDatabasesAsync(server, config);
+var result = await orchestrator.BackupAllDatabasesAsync(server, config, apiSettings.EnvironmentName);
 
 Console.WriteLine();
 Console.WriteLine("=== Backup Summary ===");
