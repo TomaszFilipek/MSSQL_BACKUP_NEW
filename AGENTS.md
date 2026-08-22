@@ -188,9 +188,9 @@ docker compose logs api
 ```
 
 ### Endpoints po uruchomieniu
-- API: `http://<VPS_IP>:5000`
-- Scalar API Docs: `http://<VPS_IP>:5000/scalar/v1` (w trybie Development)
-- SQL Server: `localhost:1433` (zewnętrznie)
+- API: `http://<VPS_IP>:8283`
+- Scalar API Docs: `http://<VPS_IP>:8283/scalar/v1` (w trybie Development)
+- SQL Server: `<VPS_IP>:8284` (zewnętrznie)
 
 ### Zarządzanie
 ```bash
@@ -215,3 +215,4 @@ docker compose logs -f mssql
 - Błędy podczas backupu pojedynczych baz są logowane, a operacja jest kontynuowana
 - W Dockerze API nasłuchuje na porcie 5000 (HTTP)
 - SQL Server w Dockerze używa domyślnie hasła z pliku .env
+- Deploy na NAS: `./deploy-to-nas.ps1` (wymaga PuTTY - plink/pscp)
