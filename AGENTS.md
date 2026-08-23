@@ -59,7 +59,7 @@ MSSQL_BACKUP_NEW/
 
 - **Framework**: .NET 9 (STS)
 - **ORM**: Entity Framework Core 9.x (dla REST API)
-- **Baza danych**: SQL Server (EntityFrameworkCore.SqlServer)
+- **Baza danych**: SQLite (EntityFrameworkCore.Sqlite) - wybrane ze względu na ograniczenia RAM na NAS
 - **Namespace**: MssqlBackup.*
 - **API**: Kontrollery (nie Minimal API)
 - **Konfiguracja**: appsettings.json + appsettings.Development.json
@@ -71,7 +71,7 @@ MSSQL_BACKUP_NEW/
 |---------|-----------|----------------|
 | MssqlBackup.Shared | — | — |
 | MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Extensions.Http, Microsoft.Data.SqlClient |
-| MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.SqlServer, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore |
+| MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.Sqlite, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore |
 
 ## Console App Architecture
 
@@ -165,9 +165,9 @@ dotnet ef database update --project src/MssqlBackup.Api
 ```
 MSSQL_BACKUP_NEW/
 ├── Dockerfile              # Multi-stage build dla API
-├── docker-compose.yml      # API + SQL Server
+├── docker-compose.yml      # API + wolumen dla SQLite
 ├── .dockerignore           # Wykluczenia z kontekstu buildu
-└── .env                    # Zmienne środowiskowe (SA_PASSWORD)
+└── deploy-to-nas.ps1       # Skrypt deploy na NAS (PuTTY)
 ```
 
 ### Uruchomienie na VPS
@@ -176,13 +176,10 @@ MSSQL_BACKUP_NEW/
 git clone <repo-url>
 cd MSSQL_BACKUP_NEW
 
-# 2. Utwórz plik .env z hasłem SA
-echo "SA_PASSWORD=YourStrong!Password123" > .env
-
-# 3. Zbuduj i uruchom
+# 2. Zbuduj i uruchom
 docker compose up -d --build
 
-# 4. Sprawdź status
+# 3. Sprawdź status
 docker compose ps
 docker compose logs api
 ```
@@ -190,7 +187,6 @@ docker compose logs api
 ### Endpoints po uruchomieniu
 - API: `http://<VPS_IP>:8283`
 - Scalar API Docs: `http://<VPS_IP>:8283/scalar/v1` (w trybie Development)
-- SQL Server: `<VPS_IP>:8284` (zewnętrznie)
 
 ### Zarządzanie
 ```bash
@@ -202,7 +198,6 @@ docker compose down -v
 
 # Logi
 docker compose logs -f api
-docker compose logs -f mssql
 ```
 
 ## Notes
