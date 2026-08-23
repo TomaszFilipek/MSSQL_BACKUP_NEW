@@ -9,17 +9,20 @@ public class BackupOrchestrator
     private readonly BackupService _backupService;
     private readonly BackupApiClient _apiClient;
     private readonly CompressionService _compressionService;
+    private readonly SambaService _sambaService;
     private readonly ILogger<BackupOrchestrator> _logger;
 
     public BackupOrchestrator(
         BackupService backupService,
         BackupApiClient apiClient,
         CompressionService compressionService,
+        SambaService sambaService,
         ILogger<BackupOrchestrator> logger)
     {
         _backupService = backupService;
         _apiClient = apiClient;
         _compressionService = compressionService;
+        _sambaService = sambaService;
         _logger = logger;
     }
 
@@ -61,22 +64,34 @@ public class BackupOrchestrator
                 await _backupService.BackupAsync(server, options);
                 _logger.LogInformation("Backup of database '{Database}' completed successfully", database);
 
+                var finalFilePath = outputPath;
+
                 if (config.PostBackupCompression.Compress)
                 {
                     await _compressionService.CompressFileAsync(outputPath, config.PostBackupCompression);
+                    finalFilePath = outputPath + ".7z";
                     _logger.LogInformation("Compression of backup '{Database}' completed successfully", database);
+                }
+
+                if (config.Samba.Enabled)
+                {
+                    _logger.LogInformation("Copying backup '{Database}' to Samba share", database);
+                    await _sambaService.CopyToShareAsync(finalFilePath, config.Samba);
+
+                    var shareFileName = Path.GetFileName(finalFilePath);
+                    finalFilePath = Path.Combine(config.Samba.SharePath, shareFileName);
                 }
 
                 stopwatch.Stop();
 
-                var fileInfo = new FileInfo(outputPath);
+                var fileInfo = new FileInfo(finalFilePath);
                 var record = new BackupRecordDto
                 {
                     EnvironmentName = environmentName,
                     InstanceName = server.Server,
                     DatabaseName = database,
                     BackupType = config.DefaultType.ToString(),
-                    OutputFilePath = config.PostBackupCompression.Compress ? outputPath + ".7z" : outputPath,
+                    OutputFilePath = finalFilePath,
                     FileSize = fileInfo.Exists ? fileInfo.Length : 0,
                     BackupDate = DateTime.Now,
                     Compress = config.Compress || config.PostBackupCompression.Compress,

@@ -14,4 +14,5 @@ public class BackupConfiguration
         "tempdb"
     ];
     public CompressionSettings PostBackupCompression { get; init; } = new();
+    public SambaSettings Samba { get; init; } = new();
 }

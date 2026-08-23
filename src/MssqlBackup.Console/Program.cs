@@ -26,6 +26,7 @@ services.AddHttpClient<BackupApiClient>(client =>
 });
 services.AddTransient<BackupService>();
 services.AddTransient<CompressionService>();
+services.AddTransient<SambaService>();
 services.AddTransient<BackupOrchestrator>();
 
 var serviceProvider = services.BuildServiceProvider();
@@ -50,6 +51,13 @@ var config = new BackupConfiguration
         Compress = true,
         Password = "MySecretPassword123",
         CompressionLevel = "Normal"
+    },
+    Samba = new SambaSettings
+    {
+        Enabled = false,
+        SharePath = @"\\192.168.1.2\backups",
+        DeleteSourceAfterCopy = false,
+        CreateOkFile = false
     }
 };
 
@@ -59,6 +67,7 @@ Console.WriteLine($"Output: {config.OutputDirectory}");
 Console.WriteLine($"Environment: {apiSettings.EnvironmentName}");
 Console.WriteLine($"API: {apiSettings.BaseUrl}");
 Console.WriteLine($"Post-backup compression: {config.PostBackupCompression.Compress}");
+Console.WriteLine($"Samba share: {(config.Samba.Enabled ? config.Samba.SharePath : "disabled")}");
 Console.WriteLine();
 
 var result = await orchestrator.BackupAllDatabasesAsync(server, config, apiSettings.EnvironmentName);
