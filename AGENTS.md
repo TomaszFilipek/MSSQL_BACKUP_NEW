@@ -41,18 +41,20 @@ MSSQL_BACKUP_NEW/
         ├── Models/
         │   ├── BackupType.cs          # enum: Full, Differential
         │   ├── BackupOptions.cs       # Parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
-        │   ├── BackupConfiguration.cs # Konfiguracja orchestratora (OutputDirectory, ExcludeDatabases)
+        │   ├── BackupConfiguration.cs # Konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Samba)
         │   ├── ServerConnection.cs    # Dane połączenia z serwerem SQL
         │   ├── BackupResult.cs        # Wynik operacji backupu
         │   ├── BackupError.cs         # Informacja o błędzie
         │   ├── ApiSettings.cs         # Ustawienia API (BaseUrl, EnvironmentName)
         │   ├── BackupRecordDto.cs     # DTO do komunikacji z API
-        │   └── CompressionSettings.cs # Ustawienia kompresji (Compress, Password, CompressionLevel)
+        │   ├── CompressionSettings.cs # Ustawienia kompresji (Compress, Password, CompressionLevel)
+        │   └── SambaSettings.cs       # Ustawienia Samba (Enabled, SharePath, DeleteSourceAfterCopy, CreateOkFile)
         └── Services/
             ├── BackupService.cs       # Wykonywanie backupów (BACKUP DATABASE)
             ├── BackupOrchestrator.cs  # Orchestration backupu wszystkich baz
             ├── BackupApiClient.cs     # Klient HTTP do wysyłania rekordów do API
-            └── CompressionService.cs  # Kompresja plików 7-Zip (z obsługą hasła)
+            ├── CompressionService.cs  # Kompresja plików 7-Zip (z obsługą hasła)
+            └── SambaService.cs        # Wysyłka backupów na udziały sieciowe Samba
 ```
 
 ## Key Technical Decisions
@@ -80,12 +82,14 @@ MSSQL_BACKUP_NEW/
 - **BackupOrchestrator** - orchestruje backup wszystkich baz na serwerze
 - **BackupApiClient** - klient HTTP do wysyłania rekordów do REST API
 - **CompressionService** - kompresja plików 7-Zip (z obsługą hasła)
+- **SambaService** - wysyłka backupów na udziały sieciowe Samba
 - **ServerConnection** - dane połączenia (Server, Username, Password, UseWindowsAuth)
 - **BackupConfiguration** - konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify)
 - **BackupOptions** - parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
 - **BackupResult** - wynik operacji (TotalDatabases, SuccessfulBackups, FailedBackups, Errors)
 - **ApiSettings** - ustawienia API (BaseUrl, EnvironmentName)
 - **CompressionSettings** - ustawienia kompresji (Compress, Password, CompressionLevel)
+- **SambaSettings** - ustawienia Samba (Enabled, SharePath, DeleteSourceAfterCopy, CreateOkFile)
 
 ### Przykład użycia
 ```csharp
@@ -104,6 +108,13 @@ var config = new BackupConfiguration
         Compress = true,
         Password = "MySecretPassword123",
         CompressionLevel = "Normal"
+    },
+    Samba = new SambaSettings
+    {
+        Enabled = true,
+        SharePath = @"\\192.168.1.2\backups",
+        DeleteSourceAfterCopy = true,
+        CreateOkFile = true
     }
 };
 
