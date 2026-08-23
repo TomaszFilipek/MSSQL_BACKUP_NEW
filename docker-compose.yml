@@ -7,31 +7,11 @@ services:
     ports:
       - "8283:5000"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Server=mssql;Database=MssqlBackup;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True
-    depends_on:
-      mssql:
-        condition: service_healthy
-    restart: unless-stopped
-
-  mssql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: mssqlbackup-mssql
-    environment:
-      - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=${SA_PASSWORD}
-      - MSSQL_PID=Developer
-    ports:
-      - "8284:1433"
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Data Source=/app/data/MssqlBackup.db
     volumes:
-      - mssql-data:/var/opt/mssql
-    healthcheck:
-      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$${MSSQL_SA_PASSWORD}" -C -Q "SELECT 1" || /opt/mssql/bin/sqlcmd -S localhost -U sa -P "$${MSSQL_SA_PASSWORD}" -C -Q "SELECT 1"
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
+      - api-data:/app/data
     restart: unless-stopped
 
 volumes:
-  mssql-data:
+  api-data:

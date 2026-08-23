@@ -155,12 +155,6 @@ set -e
 export PATH=/usr/local/bin:/usr/bin:/bin:`$PATH
 
 COMPOSE_FILE="$NAS_ROOT/docker-compose.yml"
-ENV_FILE="$NAS_ROOT/.env"
-
-echo ">>> Tworzenie pliku .env..."
-cat > "`$ENV_FILE" << 'ENVEOF'
-SA_PASSWORD=YourStrong!Password123
-ENVEOF
 
 echo ">>> Zatrzymywanie kontenerow..."
 docker-compose -f "`$COMPOSE_FILE" down --remove-orphans
@@ -169,10 +163,10 @@ echo ">>> Budowanie obrazow (bez cache)..."
 docker-compose -f "`$COMPOSE_FILE" build --no-cache
 
 echo ">>> Uruchamianie kontenerow..."
-docker-compose -f "`$COMPOSE_FILE" --env-file "`$ENV_FILE" up -d
+docker-compose -f "`$COMPOSE_FILE" up -d
 
 echo ">>> Status kontenerow:"
-docker-compose -f "`$COMPOSE_FILE" --env-file "`$ENV_FILE" ps
+docker-compose -f "`$COMPOSE_FILE" ps
 "@
 
 $deployScriptLocal = Join-Path $env:TEMP "MSSQL_BACKUP_NEW_deploy.sh"
@@ -202,6 +196,5 @@ Remove-Item $tempDir -Recurse -Force
 Write-OK "Gotowe!"
 
 Write-Host ""
-Write-Host "  API:        http://${NAS_IP}:8283" -ForegroundColor Magenta
-Write-Host "  SQL Server: ${NAS_IP}:8284" -ForegroundColor Magenta
+Write-Host "  API: http://${NAS_IP}:8283" -ForegroundColor Magenta
 Write-Host ""
