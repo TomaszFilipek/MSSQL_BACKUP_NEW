@@ -24,12 +24,12 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ApiSettings__BaseUrl=http://api:5000
       - ASPNETCORE_URLS=http://+:5000
-      - ForwardedHeaders__ForwardedHeaders=ForwardedFor,ForwardedProto
-      - ForwardedHeaders__KnownNetworks=
-      - ForwardedHeaders__KnownProxies=
+    volumes:
+      - web-data:/app/data
     depends_on:
       - api
     restart: unless-stopped
 
 volumes:
   api-data:
+  web-data:
