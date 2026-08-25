@@ -16,18 +16,34 @@ public class SambaService
     public async Task CopyToShareAsync(string sourceFilePath, SambaSettings settings)
     {
         if (!settings.Enabled || string.IsNullOrEmpty(settings.SharePath))
+            return;
+
+        var fileName = Path.GetFileName(sourceFilePath);
+        var destPath = Path.Combine(settings.SharePath, fileName);
+        await CopyToShareAsync(sourceFilePath, destPath, settings);
+    }
+
+    public async Task CopyToShareAsync(string sourceFilePath, string destFilePath, SambaSettings settings)
+    {
+        if (!settings.Enabled || string.IsNullOrEmpty(settings.SharePath))
         {
             return;
         }
 
-        var fileName = Path.GetFileName(sourceFilePath);
-        var destPath = Path.Combine(settings.SharePath, fileName);
+        var destPath = destFilePath;
 
         _logger.LogInformation("Connecting to Samba share '{SharePath}'", settings.SharePath);
         await ConnectAsync(settings);
 
         try
         {
+            var destDir = Path.GetDirectoryName(destPath);
+            if (!string.IsNullOrEmpty(destDir) && !Directory.Exists(destDir))
+            {
+                _logger.LogInformation("Creating directory '{DestDir}' on share", destDir);
+                Directory.CreateDirectory(destDir);
+            }
+
             _logger.LogInformation("Copying '{SourceFile}' to Samba share", sourceFilePath);
             File.Copy(sourceFilePath, destPath, overwrite: true);
 

@@ -33,6 +33,10 @@ public class BackupOrchestrator
     {
         _logger.LogInformation("Starting backup of all databases on server '{Server}'", server.Server);
 
+        var warsawZone = GetWarsawZone();
+        var warsawJobTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, warsawZone);
+        var jobTimestampFolder = warsawJobTime.ToString("yyyy-MM-dd HH-mm-ss");
+
         BackupJobDto? job = null;
         try
         {
@@ -108,7 +112,7 @@ public class BackupOrchestrator
 
             try
             {
-                var outputPath = BuildOutputPath(config.OutputDirectory, server.Server, database);
+                var outputPath = BuildOutputPath(config.OutputDirectory, environmentName, warsawJobTime, database);
                 var directory = Path.GetDirectoryName(outputPath);
 
                 if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -169,10 +173,10 @@ public class BackupOrchestrator
                         await _jobClient.UpdateJobAsync(job);
                     }
                     _logger.LogInformation("Copying backup '{Database}' to Samba share", database);
-                    await _sambaService.CopyToShareAsync(finalFilePath, config.Samba);
-
-                    var shareFileName = Path.GetFileName(finalFilePath);
-                    finalFilePath = Path.Combine(config.Samba.SharePath, shareFileName);
+                    var sambaFolder = Path.Combine(config.Samba.SharePath, environmentName, jobTimestampFolder);
+                    var sambaDestPath = Path.Combine(sambaFolder, Path.GetFileName(finalFilePath));
+                    await _sambaService.CopyToShareAsync(finalFilePath, sambaDestPath, config.Samba);
+                    finalFilePath = sambaDestPath;
                 }
 
                 stopwatch.Stop();
@@ -251,14 +255,20 @@ public class BackupOrchestrator
         return result;
     }
 
+    public static string BuildOutputPath(string outputDirectory, string environmentName, DateTime warsawJobTime, string databaseName)
+    {
+        var folder = warsawJobTime.ToString("yyyy-MM-dd HH-mm-ss");
+        var timestamp = warsawJobTime.ToString("yyyyMMdd_HHmmss");
+        var fileName = $"{databaseName}_{timestamp}.bak";
+        return Path.Combine(outputDirectory, environmentName, folder, fileName);
+    }
+
+    // Backward compatible overload (for tests)
     public static string BuildOutputPath(string outputDirectory, string instanceName, string databaseName)
     {
         var warsawZone = GetWarsawZone();
         var warsawNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, warsawZone);
-        var dateFolder = warsawNow.ToString("yyyy-MM-dd");
-        var timestamp = warsawNow.ToString("yyyyMMdd_HHmmss");
-        var fileName = $"{databaseName}_{timestamp}.bak";
-        return Path.Combine(outputDirectory, instanceName, dateFolder, fileName);
+        return BuildOutputPath(outputDirectory, instanceName, warsawNow, databaseName);
     }
 
     private static TimeZoneInfo GetWarsawZone()

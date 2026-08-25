@@ -27,13 +27,31 @@ Log.Logger = new LoggerConfiguration()
         outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
+string? GetArg(string name)
+{
+    for (int i = 0; i < args.Length; i++)
+    {
+        var a = args[i];
+        if (a.Equals($"--{name}", StringComparison.OrdinalIgnoreCase) ||
+            a.Equals($"-{name[0]}", StringComparison.OrdinalIgnoreCase) ||
+            a.Equals($"/{name}", StringComparison.OrdinalIgnoreCase))
+        {
+            if (i + 1 < args.Length) return args[i + 1];
+            return string.Empty;
+        }
+        if (a.StartsWith($"--{name}=", StringComparison.OrdinalIgnoreCase) ||
+            a.StartsWith($"--{name}:", StringComparison.OrdinalIgnoreCase))
+            return a.Substring(a.IndexOfAny(['=', ':']) + 1);
+        if (a.StartsWith($"-{name[0]}=", StringComparison.OrdinalIgnoreCase))
+            return a.Substring(2);
+    }
+    return null;
+}
+
 try
 {
     var apiSettings = new ApiSettings();
     configuration.GetSection("ApiSettings").Bind(apiSettings);
-
-    var serverSettings = new ServerSettings();
-    configuration.GetSection("ServerSettings").Bind(serverSettings);
 
     var backupSettings = new BackupSettings();
     configuration.GetSection("BackupSettings").Bind(backupSettings);
@@ -44,6 +62,57 @@ try
     var sambaSettings = new SambaSettings();
     configuration.GetSection("SambaSettings").Bind(sambaSettings);
 
+    // Load servers: prefer "Servers" array, fallback to legacy "ServerSettings"
+    var servers = configuration.GetSection("Servers").Get<List<NamedServerSettings>>();
+    if (servers == null || servers.Count == 0)
+    {
+        var legacy = new ServerSettings();
+        configuration.GetSection("ServerSettings").Bind(legacy);
+        // treat as configured if Server is not empty
+        if (!string.IsNullOrWhiteSpace(legacy.Server))
+        {
+            servers = [new NamedServerSettings
+            {
+                Name = "Default",
+                Server = legacy.Server!,
+                Database = legacy.Database,
+                Username = legacy.Username,
+                Password = legacy.Password,
+                UseWindowsAuth = legacy.UseWindowsAuth
+            }];
+        }
+    }
+
+    if (servers == null || servers.Count == 0)
+    {
+        Console.Error.WriteLine("Brak zdefiniowanych serwerow w konfiguracji (Servers lub ServerSettings).");
+        Environment.Exit(1);
+    }
+
+    var requestedServer = GetArg("server");
+    if (!string.IsNullOrWhiteSpace(requestedServer))
+    {
+        var filtered = servers!.Where(s => s.Name.Equals(requestedServer, StringComparison.OrdinalIgnoreCase) ||
+                                          s.Server.Equals(requestedServer, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (filtered.Count == 0)
+        {
+            Console.Error.WriteLine($"Nie znaleziono serwera '{requestedServer}'. Dostepne: {string.Join(", ", servers!.Select(s => s.Name))}");
+            Console.Error.WriteLine("Uzyj: --server <Name>  lub  --server=<Name>");
+            Environment.Exit(1);
+        }
+        servers = filtered;
+    }
+
+    if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?"))
+    {
+        Console.WriteLine("MssqlBackup.Console - uzycie:");
+        Console.WriteLine("  MssqlBackup.Console [--server <Name>]");
+        Console.WriteLine("  Dostepne serwery:");
+        foreach (var s in servers!)
+            Console.WriteLine($"    - {s.Name}: {s.Server} {(s.UseWindowsAuth ? "(WindowsAuth)" : $"User={s.Username}")}");
+        return;
+    }
+
     var services = new ServiceCollection();
     services.AddSingleton<IConfiguration>(configuration);
     services.AddLogging(builder =>
@@ -51,31 +120,15 @@ try
         builder.ClearProviders();
         builder.AddSerilog(Log.Logger, dispose: true);
     });
-    services.AddHttpClient<BackupApiClient>(client =>
-    {
-        client.BaseAddress = new Uri(apiSettings.BaseUrl);
-    });
-    services.AddHttpClient<BackupJobApiClient>(client =>
-    {
-        client.BaseAddress = new Uri(apiSettings.BaseUrl);
-    });
+    services.AddHttpClient<BackupApiClient>(client => { client.BaseAddress = new Uri(apiSettings.BaseUrl); });
+    services.AddHttpClient<BackupJobApiClient>(client => { client.BaseAddress = new Uri(apiSettings.BaseUrl); });
     services.AddTransient<BackupService>();
     services.AddTransient<CompressionService>();
     services.AddTransient<SambaService>();
     services.AddTransient<BackupOrchestrator>();
 
     var serviceProvider = services.BuildServiceProvider();
-
     var orchestrator = serviceProvider.GetRequiredService<BackupOrchestrator>();
-
-    var server = new ServerConnection
-    {
-        Server = serverSettings.Server,
-        Database = serverSettings.Database,
-        Username = serverSettings.Username,
-        Password = serverSettings.Password,
-        UseWindowsAuth = serverSettings.UseWindowsAuth
-    };
 
     var config = new BackupConfiguration
     {
@@ -90,31 +143,48 @@ try
     };
 
     Console.WriteLine("MssqlBackup.Console - Backup Orchestrator");
-    Console.WriteLine($"Server: {server.Server}");
-    Console.WriteLine($"Output: {config.OutputDirectory}");
     Console.WriteLine($"Environment: {apiSettings.EnvironmentName}");
     Console.WriteLine($"API: {apiSettings.BaseUrl}");
+    Console.WriteLine($"Output: {config.OutputDirectory} / {{ENV}}/{{yyyy-MM-dd HH-mm-ss}}");
     Console.WriteLine($"Post-backup compression: {config.PostBackupCompression.Compress} (delete source: {config.PostBackupCompression.DeleteSourceAfterCompress})");
-    Console.WriteLine($"Samba share: {(config.Samba.Enabled ? config.Samba.SharePath : "disabled")}");
+    Console.WriteLine($"Samba share: {(config.Samba.Enabled ? config.Samba.SharePath : "disabled")} (same structure)");
     Console.WriteLine($"Log file: {Path.Combine(logDir, "backup-.log")} (retention 14 days)");
+    Console.WriteLine($"Serwery do przetworzenia: {servers!.Count} ({string.Join(", ", servers.Select(s => s.Name))})");
+    if (!string.IsNullOrWhiteSpace(requestedServer))
+        Console.WriteLine($"Wybrany serwer (filtr): {requestedServer}");
     Console.WriteLine();
 
-    var result = await orchestrator.BackupAllDatabasesAsync(server, config, apiSettings.EnvironmentName);
+    var totalResult = new BackupResult { TotalDatabases = 0 };
 
-    Console.WriteLine();
-    Console.WriteLine("=== Backup Summary ===");
-    Console.WriteLine($"Total databases: {result.TotalDatabases}");
-    Console.WriteLine($"Successful: {result.SuccessfulBackups}");
-    Console.WriteLine($"Failed: {result.FailedBackups}");
+    foreach (var srv in servers!)
+    {
+        var server = srv.ToConnection();
+        var envName = apiSettings.EnvironmentName; // global env for all servers
+        Console.WriteLine($"=== Server: {srv.Name} ({server.Server}) ===");
+        Log.Information("Processing server {ServerName} ({Server})", srv.Name, server.Server);
 
-    if (result.Errors.Count > 0)
+        var result = await orchestrator.BackupAllDatabasesAsync(server, config, envName);
+
+        totalResult.TotalDatabases += result.TotalDatabases;
+        totalResult.SuccessfulBackups += result.SuccessfulBackups;
+        totalResult.FailedBackups += result.FailedBackups;
+        totalResult.Errors.AddRange(result.Errors);
+
+        Console.WriteLine($"Server {srv.Name}: {result.SuccessfulBackups}/{result.TotalDatabases} OK, {result.FailedBackups} errors");
+        Console.WriteLine();
+    }
+
+    Console.WriteLine("=== Backup Summary (all servers) ===");
+    Console.WriteLine($"Total databases: {totalResult.TotalDatabases}");
+    Console.WriteLine($"Successful: {totalResult.SuccessfulBackups}");
+    Console.WriteLine($"Failed: {totalResult.FailedBackups}");
+
+    if (totalResult.Errors.Count > 0)
     {
         Console.WriteLine();
         Console.WriteLine("Errors:");
-        foreach (var error in result.Errors)
-        {
+        foreach (var error in totalResult.Errors)
             Console.WriteLine($"  - {error.DatabaseName}: {error.ErrorMessage}");
-        }
     }
 }
 catch (Exception ex)

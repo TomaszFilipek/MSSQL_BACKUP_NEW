@@ -220,7 +220,12 @@ dotnet run --project src/MssqlBackup.Api
 
 ### Run Console
 ```bash
+# Wszystkie skonfigurowane serwery
 dotnet run --project src/MssqlBackup.Console
+
+# Konkretny serwer (Name lub Server)
+dotnet run --project src/MssqlBackup.Console -- --server PROD-01
+dotnet run --project src/MssqlBackup.Console -- --server ".\SQLEXPRESS"
 ```
 
 ### EF Core Migrations
@@ -273,13 +278,16 @@ dotnet ef database update --project src/MssqlBackup.Api
     "BaseUrl": "http://localhost:5142",
     "EnvironmentName": "Production"
   },
-  "ServerSettings": {
-    "Server": ".\\SQLEXPRESS",
-    "Database": null,
-    "Username": null,
-    "Password": null,
-    "UseWindowsAuth": true
-  },
+  "Servers": [
+    {
+      "Name": "PROD-01",
+      "Server": ".\\SQLEXPRESS",
+      "Database": null,
+      "Username": null,
+      "Password": null,
+      "UseWindowsAuth": true
+    }
+  ],
   "BackupSettings": {
     "OutputDirectory": "C:\\Backups\\MSSQL",
     "DefaultType": "Full",
@@ -305,13 +313,22 @@ dotnet ef database update --project src/MssqlBackup.Api
 }
 ```
 
-### Console - `Program.cs` (odczyt konfiguracji z appsettings)
+### Console - `Program.cs` (odczyt konfiguracji z appsettings + wybór serwera)
 ```csharp
 var apiSettings = new ApiSettings();
 configuration.GetSection("ApiSettings").Bind(apiSettings);
 
-var serverSettings = new ServerSettings();
-configuration.GetSection("ServerSettings").Bind(serverSettings);
+// Servers: prefer "Servers" array, fallback to legacy "ServerSettings"
+var servers = configuration.GetSection("Servers").Get<List<NamedServerSettings>>();
+if (servers == null || servers.Count == 0)
+{
+    var legacy = new ServerSettings();
+    configuration.GetSection("ServerSettings").Bind(legacy);
+    servers = [new NamedServerSettings { Name = "Default", Server = legacy.Server }];
+}
+// Filtrowanie: --server <Name>
+var requested = args.FirstOrDefault(a => a.StartsWith("--server"));
+if (requested != null) servers = servers.Where(s => s.Name == requested).ToList();
 
 var backupSettings = new BackupSettings();
 configuration.GetSection("BackupSettings").Bind(backupSettings);
@@ -372,7 +389,7 @@ docker compose logs -f api
 - Migracje EF Core znajdują się w projekcie API (Data/Migrations/)
 - Połączenie z bazą danych jest konfigurowane przez appsettings.json
 - BackupOrchestrator pomija domyślnie bazy systemowe (master, model, msdb, tempdb)
-- Pliki backupów są zapisywane w podkatalogach datowych (yyyy-MM-dd/)
+- Pliki backupów są zapisywane w `[OutputDirectory]/[EnvironmentName]/[yyyy-MM-dd HH-mm-ss]/` (ta sama struktura lokalnie i na Sambie)
 - Błędy podczas backupu pojedynczych baz są logowane, a operacja jest kontynuowana
 - W Dockerze API nasłuchuje na porcie 5000 (HTTP)
 - SQL Server w Dockerze używa domyślnie hasła z pliku .env
