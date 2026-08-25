@@ -29,4 +29,11 @@ public class BackupJob
     public string? CurrentStep { get; set; }
 
     public string? Message { get; set; }
+
+    // Multi-server run info (x / TotalServers)
+    public string? ServerName { get; set; }
+
+    public int TotalServers { get; set; } = 1;
+
+    public int ServerIndex { get; set; } = 1;
 }

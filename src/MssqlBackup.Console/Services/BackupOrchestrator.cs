@@ -29,9 +29,9 @@ public class BackupOrchestrator
         _logger = logger;
     }
 
-    public async Task<BackupResult> BackupAllDatabasesAsync(ServerConnection server, BackupConfiguration config, string environmentName)
+    public async Task<BackupResult> BackupAllDatabasesAsync(ServerConnection server, BackupConfiguration config, string environmentName, string? serverName = null, int totalServers = 1, int serverIndex = 1)
     {
-        _logger.LogInformation("Starting backup of all databases on server '{Server}'", server.Server);
+        _logger.LogInformation("Starting backup of all databases on server '{Server}' ({Index}/{Total})", server.Server, serverIndex, totalServers);
 
         var warsawZone = GetWarsawZone();
         var warsawJobTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, warsawZone);
@@ -47,6 +47,9 @@ public class BackupOrchestrator
                 EnvironmentName = environmentName,
                 InstanceName = server.Server,
                 HostName = Environment.MachineName,
+                ServerName = serverName ?? server.Server,
+                TotalServers = totalServers,
+                ServerIndex = serverIndex,
                 Status = "Running",
                 StartedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -54,7 +57,7 @@ public class BackupOrchestrator
                 CompletedCount = 0,
                 FailedCount = 0,
                 CurrentStep = "Listing databases",
-                Message = $"Rozpoczynam backup na {server.Server}"
+                Message = $"Rozpoczynam backup na {server.Server} ({serverIndex}/{totalServers})"
             };
             await _jobClient.CreateJobAsync(job);
         }

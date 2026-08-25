@@ -96,6 +96,9 @@ public class BackupJobsController : ControllerBase
         existing.CurrentDatabase = job.CurrentDatabase;
         existing.CurrentStep = job.CurrentStep;
         existing.Message = job.Message;
+        existing.ServerName = job.ServerName;
+        existing.TotalServers = job.TotalServers;
+        existing.ServerIndex = job.ServerIndex;
 
         await _context.SaveChangesAsync();
 

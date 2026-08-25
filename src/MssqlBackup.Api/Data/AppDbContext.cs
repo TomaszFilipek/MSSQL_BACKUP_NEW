@@ -35,6 +35,7 @@ public class AppDbContext : DbContext
             entity.Property(e => e.InstanceName).HasMaxLength(200);
             entity.Property(e => e.HostName).HasMaxLength(200);
             entity.Property(e => e.Status).HasMaxLength(50);
+            entity.Property(e => e.ServerName).HasMaxLength(200);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.UpdatedAt);
             entity.HasIndex(e => new { e.EnvironmentName, e.InstanceName });

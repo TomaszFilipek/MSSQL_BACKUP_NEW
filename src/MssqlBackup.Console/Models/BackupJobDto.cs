@@ -16,4 +16,7 @@ public class BackupJobDto
     public string? CurrentDatabase { get; set; }
     public string? CurrentStep { get; set; }
     public string? Message { get; set; }
+    public string? ServerName { get; set; }
+    public int TotalServers { get; set; } = 1;
+    public int ServerIndex { get; set; } = 1;
 }

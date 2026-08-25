@@ -156,14 +156,15 @@ try
 
     var totalResult = new BackupResult { TotalDatabases = 0 };
 
-    foreach (var srv in servers!)
+    for (int srvIdx = 0; srvIdx < servers!.Count; srvIdx++)
     {
+        var srv = servers[srvIdx];
         var server = srv.ToConnection();
         var envName = apiSettings.EnvironmentName; // global env for all servers
-        Console.WriteLine($"=== Server: {srv.Name} ({server.Server}) ===");
-        Log.Information("Processing server {ServerName} ({Server})", srv.Name, server.Server);
+        Console.WriteLine($"=== Server: {srv.Name} ({server.Server}) [{srvIdx + 1}/{servers.Count}] ===");
+        Log.Information("Processing server {ServerName} ({Server}) {Index}/{Total}", srv.Name, server.Server, srvIdx + 1, servers.Count);
 
-        var result = await orchestrator.BackupAllDatabasesAsync(server, config, envName);
+        var result = await orchestrator.BackupAllDatabasesAsync(server, config, envName, srv.Name, servers.Count, srvIdx + 1);
 
         totalResult.TotalDatabases += result.TotalDatabases;
         totalResult.SuccessfulBackups += result.SuccessfulBackups;
