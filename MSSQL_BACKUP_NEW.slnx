@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/files/">
+    <File Path="AGENTS.md" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/MssqlBackup.Api/MssqlBackup.Api.csproj" />
     <Project Path="src/MssqlBackup.Console/MssqlBackup.Console.csproj" />
