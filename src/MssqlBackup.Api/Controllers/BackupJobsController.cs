@@ -99,6 +99,7 @@ public class BackupJobsController : ControllerBase
         existing.ServerName = job.ServerName;
         existing.TotalServers = job.TotalServers;
         existing.ServerIndex = job.ServerIndex;
+        existing.Databases = job.Databases ?? [];
 
         await _context.SaveChangesAsync();
 

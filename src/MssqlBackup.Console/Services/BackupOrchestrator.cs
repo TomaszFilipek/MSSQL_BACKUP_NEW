@@ -92,6 +92,7 @@ public class BackupOrchestrator
         if (job != null)
         {
             job.TotalDatabases = databasesToBackup.Count;
+            job.Databases = databasesToBackup.Select(db => new BackupJobDatabaseInfo { DatabaseName = db, Status = "Pending" }).ToList();
             job.CurrentStep = databasesToBackup.Count == 0 ? "Idle - no databases" : "Starting";
             job.Message = $"Do zbackupowania: {databasesToBackup.Count} baz";
             await _jobClient.UpdateJobAsync(job);
@@ -109,6 +110,8 @@ public class BackupOrchestrator
                 job.CurrentDatabase = database;
                 job.CurrentStep = "Backup";
                 job.Message = $"Backup {database} ({i + 1}/{databasesToBackup.Count})";
+                var dbEntry = job.Databases.FirstOrDefault(d => d.DatabaseName == database);
+                if (dbEntry != null) dbEntry.Status = "Running";
                 job.UpdatedAt = DateTime.UtcNow;
                 await _jobClient.UpdateJobAsync(job);
             }
@@ -216,6 +219,13 @@ public class BackupOrchestrator
                 {
                     job.CompletedCount = result.SuccessfulBackups;
                     job.FailedCount = result.FailedBackups;
+                    var dbOk = job.Databases.FirstOrDefault(d => d.DatabaseName == database);
+                    if (dbOk != null)
+                    {
+                        dbOk.Status = "Completed";
+                        dbOk.FileSize = fileSizeAfterCompression;
+                        dbOk.DurationSeconds = stopwatch.Elapsed.TotalSeconds;
+                    }
                     job.CurrentStep = "Done";
                     job.Message = $"Zakonczono {database} OK";
                     await _jobClient.UpdateJobAsync(job);
@@ -236,6 +246,13 @@ public class BackupOrchestrator
                 {
                     job.FailedCount = result.FailedBackups;
                     job.CompletedCount = result.SuccessfulBackups;
+                    var dbErr = job.Databases.FirstOrDefault(d => d.DatabaseName == database);
+                    if (dbErr != null)
+                    {
+                        dbErr.Status = "Failed";
+                        dbErr.ErrorMessage = ex.Message;
+                        dbErr.DurationSeconds = stopwatch.Elapsed.TotalSeconds;
+                    }
                     job.CurrentStep = "Error";
                     job.Message = $"Blad {database}: {ex.Message}";
                     await _jobClient.UpdateJobAsync(job);

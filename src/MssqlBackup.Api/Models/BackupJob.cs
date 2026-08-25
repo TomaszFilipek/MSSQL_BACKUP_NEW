@@ -1,5 +1,14 @@
 namespace MssqlBackup.Api.Models;
 
+public class BackupJobDatabaseInfo
+{
+    public string DatabaseName { get; set; } = string.Empty;
+    public string Status { get; set; } = "Pending"; // Pending, Running, Completed, Failed
+    public long FileSize { get; set; }
+    public string? ErrorMessage { get; set; }
+    public double DurationSeconds { get; set; }
+}
+
 public class BackupJob
 {
     public Guid Id { get; set; }
@@ -36,4 +45,6 @@ public class BackupJob
     public int TotalServers { get; set; } = 1;
 
     public int ServerIndex { get; set; } = 1;
+
+    public List<BackupJobDatabaseInfo> Databases { get; set; } = [];
 }

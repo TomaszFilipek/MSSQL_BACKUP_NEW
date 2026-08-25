@@ -45,7 +45,9 @@ else
             {
                 var progress = job.TotalDatabases > 0 ? (job.CompletedCount + job.FailedCount) * 100 / job.TotalDatabases : 0;
                 var elapsed = DateTime.UtcNow - job.StartedAt;
-                <div class="col-md-6 col-lg-4">
+                var isExpanded = _expandedJobs.Contains(job.Id);
+                var filteredDbs = GetFilteredDatabases(job);
+                <div class="col-md-6 col-xl-4">
                     <div class="card border-primary h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <span>
@@ -102,6 +104,68 @@ else
                                 <div class="small text-muted mt-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="@job.Message">@job.Message</div>
                             }
                             <div class="small text-muted mt-2">Czas: @elapsed.ToString(@"hh\:mm\:ss") | Aktualizacja: @TimeHelper.ToWarsawTime(job.UpdatedAt).ToString("HH:mm:ss")</div>
+
+                            <button class="btn btn-sm @(isExpanded ? "btn-secondary" : "btn-outline-primary") mt-3 w-100" @onclick="() => ToggleDatabases(job.Id)">
+                                @(isExpanded ? "Ukryj bazy" : $"Bazy ({job.Databases?.Count ?? job.TotalDatabases})")
+                                <span class="ms-1">@(isExpanded ? "▲" : "▼")</span>
+                            </button>
+
+                            @if (isExpanded)
+                            {
+                                var dbs = job.Databases ?? [];
+                                <div class="mt-3">
+                                    @if (dbs.Count == 0)
+                                    {
+                                        <div class="alert alert-warning small py-2 mb-2">Brak szczegółów - zadanie sprzed aktualizacji lub dane nie zostały wysłane.</div>
+                                    }
+                                    else
+                                    {
+                                        <input type="text" class="form-control form-control-sm mb-2" placeholder="Filtruj bazę..."
+                                               value="@GetSearchTerm(job.Id)"
+                                               @oninput="(e) => SetSearchTerm(job.Id, e.Value?.ToString())" />
+                                        <div class="small text-muted mb-1">Wyświetlanie @filteredDbs.Count z @dbs.Count</div>
+                                        <div style="max-height: 300px; overflow-y: auto;" class="border rounded">
+                                            <table class="table table-sm table-hover mb-0 small">
+                                                <thead class="table-light" style="position: sticky; top: 0;">
+                                                    <tr>
+                                                        <th>Baza</th>
+                                                        <th>Status</th>
+                                                        <th>Rozmiar</th>
+                                                        <th>Czas</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var db in filteredDbs.Take(200))
+                                                    {
+                                                        var badge = db.Status switch
+                                                        {
+                                                            "Completed" => "bg-success",
+                                                            "Failed" => "bg-danger",
+                                                            "Running" => "bg-primary",
+                                                            "Pending" => "bg-secondary",
+                                                            _ => "bg-light text-dark"
+                                                        };
+                                                        <tr>
+                                                            <td title="@db.DatabaseName" style="max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@db.DatabaseName</td>
+                                                            <td><span class="badge @badge" style="font-size: 0.65rem;">@db.Status</span></td>
+                                                            <td>@(db.FileSize > 0 ? FormatSize(db.FileSize) : "-")</td>
+                                                            <td>@(db.DurationSeconds > 0 ? $"{db.DurationSeconds:F1}s" : "-")</td>
+                                                        </tr>
+                                                        @if (db.Status == "Failed" && !string.IsNullOrEmpty(db.ErrorMessage))
+                                                        {
+                                                            <tr><td colspan="4" class="text-danger small" style="white-space: normal;">@db.ErrorMessage</td></tr>
+                                                        }
+                                                    }
+                                                    @if (filteredDbs.Count > 200)
+                                                    {
+                                                        <tr><td colspan="4" class="text-center text-muted">... i @(filteredDbs.Count - 200) więcej (użyj filtra)</td></tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                </div>
+                            }
                         </div>
                     </div>
                 </div>
@@ -150,6 +214,7 @@ else
                     <th>Host</th>
                     <th>Status</th>
                     <th>Bazy</th>
+                    <th></th>
                     <th>Czas</th>
                     <th>Info</th>
                 </tr>
@@ -166,6 +231,8 @@ else
                         _ => "bg-secondary"
                     };
                     var duration = job.FinishedAt.HasValue ? job.FinishedAt.Value - job.StartedAt : DateTime.UtcNow - job.StartedAt;
+                    var isExp = _expandedJobs.Contains(job.Id);
+                    var filteredDbs = GetFilteredDatabases(job);
                     <tr class="@(job.Status == "Running" ? "table-primary" : "")">
                         <td class="text-nowrap">@TimeHelper.ToWarsawTime(job.StartedAt).ToString("dd.MM HH:mm:ss")</td>
                         <td><span class="badge bg-info">@job.EnvironmentName</span></td>
@@ -187,13 +254,84 @@ else
                         <td class="small text-muted">@job.HostName</td>
                         <td><span class="badge @statusClass">@job.Status</span></td>
                         <td>@job.CompletedCount/@job.TotalDatabases (@job.FailedCount err)</td>
+                        <td>
+                            @if ((job.Databases?.Count ?? 0) > 0)
+                            {
+                                <button class="btn btn-sm @(isExp ? "btn-secondary" : "btn-outline-primary")" style="font-size: 0.7rem; padding: 0.1rem 0.4rem;" @onclick="() => ToggleDatabases(job.Id)">
+                                    @(isExp ? "Ukryj" : $"{job.Databases!.Count}")
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="text-muted">-</span>
+                            }
+                        </td>
                         <td>@duration.ToString(@"hh\:mm\:ss")</td>
                         <td class="small" title="@job.Message">@(job.Message?.Length > 40 ? job.Message[..40] + "..." : job.Message)</td>
                     </tr>
+                    @if (isExp)
+                    {
+                        <tr>
+                            <td colspan="10" class="p-0">
+                                <div class="p-3 bg-light">
+                                    @if ((job.Databases?.Count ?? 0) == 0)
+                                    {
+                                        <div class="text-muted small">Brak szczegółów baz dla tego zadania.</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="d-flex gap-2 mb-2 align-items-center">
+                                            <input type="text" class="form-control form-control-sm" style="max-width: 250px;" placeholder="Filtruj bazę..."
+                                                   value="@GetSearchTerm(job.Id)"
+                                                   @oninput="(e) => SetSearchTerm(job.Id, e.Value?.ToString())" />
+                                            <small class="text-muted">Wyświetlanie @filteredDbs.Count z @job.Databases!.Count</small>
+                                        </div>
+                                        <div style="max-height: 350px; overflow-y: auto;" class="border rounded bg-white">
+                                            <table class="table table-sm table-hover mb-0 small">
+                                                <thead class="table-light" style="position: sticky; top: 0;">
+                                                    <tr>
+                                                        <th>Baza</th>
+                                                        <th>Status</th>
+                                                        <th>Rozmiar</th>
+                                                        <th>Czas</th>
+                                                        <th>Błąd</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var db in filteredDbs.Take(300))
+                                                    {
+                                                        var badge = db.Status switch
+                                                        {
+                                                            "Completed" => "bg-success",
+                                                            "Failed" => "bg-danger",
+                                                            "Running" => "bg-primary",
+                                                            "Pending" => "bg-secondary",
+                                                            _ => "bg-light text-dark"
+                                                        };
+                                                        <tr>
+                                                            <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="@db.DatabaseName">@db.DatabaseName</td>
+                                                            <td><span class="badge @badge" style="font-size: 0.65rem;">@db.Status</span></td>
+                                                            <td>@(db.FileSize > 0 ? FormatSize(db.FileSize) : "-")</td>
+                                                            <td>@(db.DurationSeconds > 0 ? $"{db.DurationSeconds:F1}s" : "-")</td>
+                                                            <td class="text-danger" style="max-width: 250px; white-space: normal; word-break: break-word;">@(db.ErrorMessage ?? "-")</td>
+                                                        </tr>
+                                                    }
+                                                    @if (filteredDbs.Count > 300)
+                                                    {
+                                                        <tr><td colspan="5" class="text-center text-muted">... i @(filteredDbs.Count - 300) więcej - zawęź filtrem</td></tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
                 }
                 @if (!_filteredJobs.Any())
                 {
-                    <tr><td colspan="9" class="text-center text-muted py-3">Brak zadań</td></tr>
+                    <tr><td colspan="10" class="text-center text-muted py-3">Brak zadań</td></tr>
                 }
             </tbody>
         </table>
@@ -210,6 +348,8 @@ else
     private bool _loading = true;
     private bool _isConnected;
     private HubConnection? _hubConnection;
+    private HashSet<Guid> _expandedJobs = [];
+    private Dictionary<Guid, string> _dbSearch = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -247,6 +387,31 @@ else
         _filterEnv = null;
         _filterStatus = null;
         ApplyFilter();
+    }
+
+    private void ToggleDatabases(Guid id)
+    {
+        if (!_expandedJobs.Add(id))
+            _expandedJobs.Remove(id);
+    }
+
+    private string GetSearchTerm(Guid id) => _dbSearch.TryGetValue(id, out var v) ? v : string.Empty;
+    private void SetSearchTerm(Guid id, string? term) => _dbSearch[id] = term ?? string.Empty;
+
+    private List<BackupJobDatabaseInfo> GetFilteredDatabases(BackupJobDto job)
+    {
+        var list = job.Databases ?? [];
+        if (!_dbSearch.TryGetValue(job.Id, out var term) || string.IsNullOrWhiteSpace(term))
+            return list;
+        return list.Where(d => d.DatabaseName.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
     }
 
     private async Task SetupSignalR()

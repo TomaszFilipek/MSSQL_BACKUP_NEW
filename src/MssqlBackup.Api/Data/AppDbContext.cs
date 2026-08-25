@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MssqlBackup.Api.Models;
 
@@ -36,6 +37,11 @@ public class AppDbContext : DbContext
             entity.Property(e => e.HostName).HasMaxLength(200);
             entity.Property(e => e.Status).HasMaxLength(50);
             entity.Property(e => e.ServerName).HasMaxLength(200);
+            entity.Property(e => e.Databases)
+                .HasColumnType("TEXT")
+                .HasConversion(
+                    v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                    v => string.IsNullOrEmpty(v) ? new List<BackupJobDatabaseInfo>() : JsonSerializer.Deserialize<List<BackupJobDatabaseInfo>>(v, (JsonSerializerOptions?)null) ?? new List<BackupJobDatabaseInfo>());
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.UpdatedAt);
             entity.HasIndex(e => new { e.EnvironmentName, e.InstanceName });

@@ -1,5 +1,14 @@
 namespace MssqlBackup.Web.Models;
 
+public class BackupJobDatabaseInfo
+{
+    public string DatabaseName { get; set; } = string.Empty;
+    public string Status { get; set; } = "Pending";
+    public long FileSize { get; set; }
+    public string? ErrorMessage { get; set; }
+    public double DurationSeconds { get; set; }
+}
+
 public class BackupJobDto
 {
     public Guid Id { get; set; }
@@ -19,4 +28,5 @@ public class BackupJobDto
     public string? ServerName { get; set; }
     public int TotalServers { get; set; } = 1;
     public int ServerIndex { get; set; } = 1;
+    public List<BackupJobDatabaseInfo> Databases { get; set; } = [];
 }
