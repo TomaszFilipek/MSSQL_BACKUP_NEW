@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using MssqlBackup.Web.Hubs;
@@ -6,7 +7,7 @@ using MssqlBackup.Web.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents();
+    .AddInteractiveServerComponents(options => options.DetailedErrors = true);
 
 builder.Services.AddHttpClient<BackupApiService>(client =>
 {
@@ -24,16 +25,18 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(o => o.EnableDetailedErrors = true);
 
 var app = builder.Build();
 
 app.UseForwardedHeaders();
 
-app.UseExceptionHandler("/Error");
+app.UseExceptionHandler("/Error", createScopeForErrors: true);
 
 app.UseStaticFiles();
 app.UseAntiforgery();
+
+app.MapGet("/health", () => Results.Ok("ok"));
 
 app.MapRazorComponents<MssqlBackup.Web.Components.App>()
     .AddInteractiveServerRenderMode();
