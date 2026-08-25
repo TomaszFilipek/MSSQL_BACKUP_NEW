@@ -393,3 +393,6 @@ FodyWeavers.xsd
 
 # Environment variables (secrets)
 .env
+
+# Local app settings (not tracked)
+appsettings.Local.json
