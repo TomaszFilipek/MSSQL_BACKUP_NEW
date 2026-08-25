@@ -14,6 +14,7 @@ COPY --from=build /app/publish .
 
 ENV ASPNETCORE_URLS=http://+:5000
 ENV ASPNETCORE_ENVIRONMENT=Production
+ENV TZ=Europe/Warsaw
 
 EXPOSE 5000
 

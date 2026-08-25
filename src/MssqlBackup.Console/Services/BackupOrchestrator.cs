@@ -98,7 +98,7 @@ public class BackupOrchestrator
                     FileSize = fileSizeAfterCompression,
                     FileSizeBeforeCompression = fileSizeBeforeCompression,
                     FileSizeAfterCompression = fileSizeAfterCompression,
-                    BackupDate = DateTime.Now,
+                    BackupDate = DateTime.UtcNow,
                     Compress = config.Compress || config.PostBackupCompression.Compress,
                     Verify = config.Verify,
                     Duration = stopwatch.Elapsed
@@ -137,10 +137,18 @@ public class BackupOrchestrator
 
     public static string BuildOutputPath(string outputDirectory, string instanceName, string databaseName)
     {
-        var dateFolder = DateTime.Now.ToString("yyyy-MM-dd");
-        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var warsawZone = GetWarsawZone();
+        var warsawNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, warsawZone);
+        var dateFolder = warsawNow.ToString("yyyy-MM-dd");
+        var timestamp = warsawNow.ToString("yyyyMMdd_HHmmss");
         var fileName = $"{databaseName}_{timestamp}.bak";
         return Path.Combine(outputDirectory, instanceName, dateFolder, fileName);
+    }
+
+    private static TimeZoneInfo GetWarsawZone()
+    {
+        try { return TimeZoneInfo.FindSystemTimeZoneById("Europe/Warsaw"); }
+        catch { try { return TimeZoneInfo.FindSystemTimeZoneById("Central European Standard Time"); } catch { return TimeZoneInfo.CreateCustomTimeZone("CEST", TimeSpan.FromHours(2), "CEST", "CEST"); } }
     }
 
     public static List<string> FilterDatabases(List<string> allDatabases, List<string> excludeDatabases)

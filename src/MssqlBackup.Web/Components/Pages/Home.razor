@@ -48,7 +48,7 @@ else
             <div class="card card-stat warning">
                 <div class="card-body">
                     <h6 class="card-subtitle mb-2 text-muted">Ostatni backup</h6>
-                    <h6 class="card-title mb-0">@(_lastBackup?.BackupDate.ToString("dd.MM.yyyy HH:mm") ?? "Brak")</h6>
+                    <h6 class="card-title mb-0">@(_lastBackup != null ? TimeHelper.ToWarsawTime(_lastBackup.BackupDate).ToString("dd.MM.yyyy HH:mm") : "Brak")</h6>
                     <small class="text-muted">@(_lastBackup?.DatabaseName ?? "")</small>
                 </div>
             </div>
@@ -86,7 +86,7 @@ else
                     @foreach (var record in _recentRecords)
                     {
                         <tr>
-                            <td>@record.BackupDate.ToString("dd.MM.yyyy HH:mm:ss")</td>
+                            <td>@TimeHelper.ToWarsawTime(record.BackupDate).ToString("dd.MM.yyyy HH:mm:ss")</td>
                             <td><strong>@record.DatabaseName</strong></td>
                             <td>@record.InstanceName</td>
                             <td>
@@ -146,7 +146,7 @@ else
             var allRecords = await Api.GetRecordsAsync();
             _recentRecords = allRecords.OrderByDescending(r => r.BackupDate).Take(5).ToList();
             _lastBackup = _recentRecords.FirstOrDefault();
-            _todayCount = allRecords.Count(r => r.BackupDate.Date == DateTime.Today);
+            _todayCount = allRecords.Count(r => TimeHelper.ToWarsawTime(r.BackupDate).Date == TimeHelper.TodayWarsaw);
             _totalCount = allRecords.Count;
             _environments = allRecords.Select(r => r.EnvironmentName).Distinct().ToList();
         }
@@ -176,7 +176,8 @@ else
                     _recentRecords.RemoveAt(5);
 
                 _lastBackup = record;
-                _todayCount++;
+                if (TimeHelper.ToWarsawTime(record.BackupDate).Date == TimeHelper.TodayWarsaw)
+                    _todayCount++;
                 _totalCount++;
 
                 await InvokeAsync(StateHasChanged);

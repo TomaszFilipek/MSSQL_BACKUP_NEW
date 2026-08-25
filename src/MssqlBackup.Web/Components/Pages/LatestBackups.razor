@@ -60,7 +60,9 @@ else
             <tbody>
                 @foreach (var record in _latestRecords)
                 {
-                    var age = DateTime.Now - record.BackupDate;
+                    var backupWarsaw = TimeHelper.ToWarsawTime(record.BackupDate);
+                    var warsawNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeHelper.WarsawZone);
+                    var age = warsawNow - backupWarsaw;
                     var ageClass = age.TotalHours < 24 ? "age-green" : age.TotalHours < 48 ? "age-yellow" : "age-red";
                     var ageText = age.TotalHours < 1
                         ? $"{age.Minutes}m"
@@ -72,7 +74,7 @@ else
                         <td><strong>@record.DatabaseName</strong></td>
                         <td>@record.InstanceName</td>
                         <td><span class="badge bg-info">@record.EnvironmentName</span></td>
-                        <td class="text-nowrap">@record.BackupDate.ToString("dd.MM.yyyy HH:mm:ss")</td>
+                        <td class="text-nowrap">@backupWarsaw.ToString("dd.MM.yyyy HH:mm:ss")</td>
                         <td>
                             <span class="badge @(record.BackupType == "Full" ? "bg-primary" : "bg-secondary")">
                                 @record.BackupType

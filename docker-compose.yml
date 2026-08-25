@@ -8,6 +8,7 @@ services:
       - "8283:5000"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
+      - TZ=Europe/Warsaw
       - ConnectionStrings__DefaultConnection=Data Source=/app/data/MssqlBackup.db
     volumes:
       - api-data:/app/data
@@ -22,6 +23,7 @@ services:
       - "8284:5000"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
+      - TZ=Europe/Warsaw
       - ApiSettings__BaseUrl=http://api:5000
       - ASPNETCORE_URLS=http://+:5000
     volumes:

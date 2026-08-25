@@ -103,7 +103,7 @@ else
                 @foreach (var record in _pagedRecords)
                 {
                     <tr>
-                        <td class="text-nowrap">@record.BackupDate.ToString("dd.MM.yyyy HH:mm:ss")</td>
+                        <td class="text-nowrap">@TimeHelper.ToWarsawTime(record.BackupDate).ToString("dd.MM.yyyy HH:mm:ss")</td>
                         <td><strong>@record.DatabaseName</strong></td>
                         <td>@record.InstanceName</td>
                         <td><span class="badge bg-info">@record.EnvironmentName</span></td>
@@ -207,9 +207,9 @@ else
         if (!string.IsNullOrEmpty(_filter.Database))
             query = query.Where(r => r.DatabaseName.Contains(_filter.Database, StringComparison.OrdinalIgnoreCase));
         if (_filter.From.HasValue)
-            query = query.Where(r => r.BackupDate >= _filter.From!.Value);
+            query = query.Where(r => TimeHelper.ToWarsawTime(r.BackupDate).Date >= _filter.From!.Value.Date);
         if (_filter.To.HasValue)
-            query = query.Where(r => r.BackupDate <= _filter.To!.Value.AddDays(1));
+            query = query.Where(r => TimeHelper.ToWarsawTime(r.BackupDate).Date <= _filter.To!.Value.Date);
 
         _filteredRecords = query.ToList();
 
