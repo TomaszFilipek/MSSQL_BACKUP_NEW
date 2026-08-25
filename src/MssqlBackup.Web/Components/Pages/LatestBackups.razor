@@ -51,7 +51,8 @@ else
                     <th>Środowisko</th>
                     <th>Ostatni backup</th>
                     <th>Typ</th>
-                    <th>Rozmiar</th>
+                    <th>Przed</th>
+                    <th>Po</th>
                     <th>Kompresja</th>
                     <th>Wiek</th>
                 </tr>
@@ -77,12 +78,14 @@ else
                                 @record.BackupType
                             </span>
                         </td>
-                        <td>@FormatSize(record.FileSize)</td>
+                        <td>@FormatSize(record.FileSizeBeforeCompression)</td>
+                        <td>@FormatSize(record.FileSizeAfterCompression)</td>
                         <td>
-                            @if (record.Compress)
+                            @if (record.Compress && record.FileSizeBeforeCompression > 0)
                             {
-                                <span class="text-muted" title="Przed: @FormatSize(record.FileSizeBeforeCompression) | Po: @FormatSize(record.FileSizeAfterCompression)">
-                                    @GetCompressionRatio(record)
+                                var ratio = (1.0 - (double)record.FileSizeAfterCompression / record.FileSizeBeforeCompression) * 100;
+                                <span class="badge @(ratio > 50 ? "bg-success" : "bg-warning text-dark")">
+                                    -@ratio.ToString("F0")%
                                 </span>
                             }
                             else
@@ -98,7 +101,7 @@ else
                 @if (!_latestRecords.Any())
                 {
                     <tr>
-                        <td colspan="8" class="text-center text-muted py-3">Brak backupów</td>
+                        <td colspan="9" class="text-center text-muted py-3">Brak backupów</td>
                     </tr>
                 }
             </tbody>

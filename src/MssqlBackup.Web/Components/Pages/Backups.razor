@@ -85,10 +85,15 @@ else
                     <th>Instancja</th>
                     <th>Środowisko</th>
                     <th>Typ</th>
-                    <th @onclick="() => SortBy(nameof(BackupRecordDto.FileSize))" style="cursor:pointer">
-                        Rozmiar @GetSortIcon(nameof(BackupRecordDto.FileSize))
+                    <th @onclick="() => SortBy(nameof(BackupRecordDto.FileSizeBeforeCompression))" style="cursor:pointer">
+                        Rozmiar przed @GetSortIcon(nameof(BackupRecordDto.FileSizeBeforeCompression))
                     </th>
-                    <th>Kompresja</th>
+                    <th @onclick="() => SortBy(nameof(BackupRecordDto.FileSizeAfterCompression))" style="cursor:pointer">
+                        Rozmiar po @GetSortIcon(nameof(BackupRecordDto.FileSizeAfterCompression))
+                    </th>
+                    <th @onclick="() => SortBy(nameof(BackupRecordDto.Compress))" style="cursor:pointer">
+                        Kompresja @GetSortIcon(nameof(BackupRecordDto.Compress))
+                    </th>
                     <th @onclick="() => SortBy(nameof(BackupRecordDto.Duration))" style="cursor:pointer">
                         Czas @GetSortIcon(nameof(BackupRecordDto.Duration))
                     </th>
@@ -107,12 +112,14 @@ else
                                 @record.BackupType
                             </span>
                         </td>
-                        <td>@FormatSize(record.FileSize)</td>
+                        <td>@FormatSize(record.FileSizeBeforeCompression)</td>
+                        <td>@FormatSize(record.FileSizeAfterCompression)</td>
                         <td>
-                            @if (record.Compress)
+                            @if (record.Compress && record.FileSizeBeforeCompression > 0)
                             {
-                                <span class="text-muted" title="Przed: @FormatSize(record.FileSizeBeforeCompression) | Po: @FormatSize(record.FileSizeAfterCompression)">
-                                    @GetCompressionRatio(record)
+                                var ratio = (1.0 - (double)record.FileSizeAfterCompression / record.FileSizeBeforeCompression) * 100;
+                                <span class="badge @(ratio > 50 ? "bg-success" : "bg-warning text-dark")">
+                                    -@ratio.ToString("F0")%
                                 </span>
                             }
                             else
@@ -126,7 +133,7 @@ else
                 @if (!_pagedRecords.Any())
                 {
                     <tr>
-                        <td colspan="8" class="text-center text-muted py-3">Brak wyników</td>
+                        <td colspan="9" class="text-center text-muted py-3">Brak wyników</td>
                     </tr>
                 }
             </tbody>

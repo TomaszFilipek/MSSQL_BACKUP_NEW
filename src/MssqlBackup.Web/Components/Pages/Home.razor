@@ -76,7 +76,9 @@ else
                         <th>Baza</th>
                         <th>Instancja</th>
                         <th>Typ</th>
-                        <th>Rozmiar</th>
+                        <th>Przed</th>
+                        <th>Po</th>
+                        <th>Kompresja</th>
                         <th>Czas</th>
                     </tr>
                 </thead>
@@ -92,14 +94,28 @@ else
                                     @record.BackupType
                                 </span>
                             </td>
-                            <td>@FormatSize(record.FileSize)</td>
+                            <td>@FormatSize(record.FileSizeBeforeCompression)</td>
+                            <td>@FormatSize(record.FileSizeAfterCompression)</td>
+                            <td>
+                                @if (record.Compress && record.FileSizeBeforeCompression > 0)
+                                {
+                                    var ratio = (1.0 - (double)record.FileSizeAfterCompression / record.FileSizeBeforeCompression) * 100;
+                                    <span class="badge @(ratio > 50 ? "bg-success" : "bg-warning text-dark")">
+                                        -@ratio.ToString("F0")%
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">-</span>
+                                }
+                            </td>
                             <td>@record.Duration.TotalSeconds.ToString("F1")s</td>
                         </tr>
                     }
                     @if (!_recentRecords.Any())
                     {
                         <tr>
-                            <td colspan="6" class="text-center text-muted py-3">Brak backupów</td>
+                            <td colspan="8" class="text-center text-muted py-3">Brak backupów</td>
                         </tr>
                     }
                 </tbody>
