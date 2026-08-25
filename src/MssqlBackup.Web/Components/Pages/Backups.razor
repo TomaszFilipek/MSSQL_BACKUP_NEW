@@ -284,7 +284,7 @@ else
         try
         {
             _hubConnection = new HubConnectionBuilder()
-                .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
+                .WithUrl(Api.HubUrl)
                 .WithAutomaticReconnect()
                 .Build();
 

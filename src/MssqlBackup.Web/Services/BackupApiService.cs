@@ -15,6 +15,8 @@ public class BackupApiService
         _logger = logger;
     }
 
+    public string HubUrl => $"{_httpClient.BaseAddress?.ToString().TrimEnd('/')}/hubs/backup";
+
     public async Task<List<BackupRecordDto>> GetRecordsAsync(BackupFilter? filter = null)
     {
         try
