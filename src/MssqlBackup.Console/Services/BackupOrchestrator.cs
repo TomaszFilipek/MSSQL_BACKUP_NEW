@@ -44,7 +44,7 @@ public class BackupOrchestrator
 
             try
             {
-                var outputPath = BuildOutputPath(config.OutputDirectory, database);
+                var outputPath = BuildOutputPath(config.OutputDirectory, server.Server, database);
                 var directory = Path.GetDirectoryName(outputPath);
 
                 if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -65,12 +65,16 @@ public class BackupOrchestrator
                 _logger.LogInformation("Backup of database '{Database}' completed successfully", database);
 
                 var finalFilePath = outputPath;
+                long fileSizeBeforeCompression = new FileInfo(outputPath).Length;
+                long fileSizeAfterCompression = fileSizeBeforeCompression;
 
                 if (config.PostBackupCompression.Compress)
                 {
                     await _compressionService.CompressFileAsync(outputPath, config.PostBackupCompression);
                     finalFilePath = outputPath + ".7z";
-                    _logger.LogInformation("Compression of backup '{Database}' completed successfully", database);
+                    fileSizeAfterCompression = new FileInfo(finalFilePath).Length;
+                    _logger.LogInformation("Compression of backup '{Database}' completed successfully. Before: {Before} bytes, After: {After} bytes",
+                        database, fileSizeBeforeCompression, fileSizeAfterCompression);
                 }
 
                 if (config.Samba.Enabled)
@@ -84,7 +88,6 @@ public class BackupOrchestrator
 
                 stopwatch.Stop();
 
-                var fileInfo = new FileInfo(finalFilePath);
                 var record = new BackupRecordDto
                 {
                     EnvironmentName = environmentName,
@@ -92,14 +95,24 @@ public class BackupOrchestrator
                     DatabaseName = database,
                     BackupType = config.DefaultType.ToString(),
                     OutputFilePath = finalFilePath,
-                    FileSize = fileInfo.Exists ? fileInfo.Length : 0,
+                    FileSize = fileSizeAfterCompression,
+                    FileSizeBeforeCompression = fileSizeBeforeCompression,
+                    FileSizeAfterCompression = fileSizeAfterCompression,
                     BackupDate = DateTime.Now,
                     Compress = config.Compress || config.PostBackupCompression.Compress,
                     Verify = config.Verify,
                     Duration = stopwatch.Elapsed
                 };
 
-                await _apiClient.SendBackupRecordAsync(record);
+                if (config.SendToApi)
+                {
+                    await _apiClient.SendBackupRecordAsync(record);
+                }
+                else
+                {
+                    _logger.LogInformation("SendToApi disabled - skipping API call for '{Database}'", database);
+                }
+
                 result.SuccessfulBackups++;
             }
             catch (Exception ex)
@@ -122,11 +135,12 @@ public class BackupOrchestrator
         return result;
     }
 
-    public static string BuildOutputPath(string outputDirectory, string databaseName)
+    public static string BuildOutputPath(string outputDirectory, string instanceName, string databaseName)
     {
         var dateFolder = DateTime.Now.ToString("yyyy-MM-dd");
-        var fileName = $"{databaseName}.bak";
-        return Path.Combine(outputDirectory, dateFolder, fileName);
+        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var fileName = $"{databaseName}_{timestamp}.bak";
+        return Path.Combine(outputDirectory, instanceName, dateFolder, fileName);
     }
 
     public static List<string> FilterDatabases(List<string> allDatabases, List<string> excludeDatabases)

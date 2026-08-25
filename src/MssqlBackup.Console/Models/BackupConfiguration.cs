@@ -6,6 +6,7 @@ public class BackupConfiguration
     public BackupType DefaultType { get; init; } = BackupType.Full;
     public bool Compress { get; init; }
     public bool Verify { get; init; }
+    public bool SendToApi { get; init; } = true;
     public List<string> ExcludeDatabases { get; init; } =
     [
         "master",

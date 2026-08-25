@@ -61,6 +61,7 @@ var config = new BackupConfiguration
     DefaultType = backupSettings.DefaultType,
     Compress = backupSettings.Compress,
     Verify = backupSettings.Verify,
+    SendToApi = backupSettings.SendToApi,
     ExcludeDatabases = backupSettings.ExcludeDatabases,
     PostBackupCompression = compressionSettings,
     Samba = sambaSettings

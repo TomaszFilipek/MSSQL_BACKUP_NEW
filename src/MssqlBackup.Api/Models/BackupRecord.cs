@@ -28,6 +28,10 @@ public class BackupRecord
 
     public long FileSize { get; set; }
 
+    public long FileSizeBeforeCompression { get; set; }
+
+    public long FileSizeAfterCompression { get; set; }
+
     public DateTime BackupDate { get; set; }
 
     public bool Compress { get; set; }
