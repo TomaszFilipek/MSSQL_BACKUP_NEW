@@ -145,7 +145,7 @@ try
     Console.WriteLine("MssqlBackup.Console - Backup Orchestrator");
     Console.WriteLine($"Environment: {apiSettings.EnvironmentName}");
     Console.WriteLine($"API: {apiSettings.BaseUrl}");
-    Console.WriteLine($"Output: {config.OutputDirectory} / {{ENV}}/{{yyyy-MM-dd HH-mm-ss}}");
+    Console.WriteLine($"Output: {config.OutputDirectory} / {{ENV}}/{{SERVER}}/{{yyyy-MM-dd HH-mm-ss}}");
     Console.WriteLine($"Post-backup compression: {config.PostBackupCompression.Compress} (delete source: {config.PostBackupCompression.DeleteSourceAfterCompress})");
     Console.WriteLine($"Samba share: {(config.Samba.Enabled ? config.Samba.SharePath : "disabled")} (same structure)");
     Console.WriteLine($"Log file: {Path.Combine(logDir, "backup-.log")} (retention 14 days)");

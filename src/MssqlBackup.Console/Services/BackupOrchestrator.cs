@@ -115,7 +115,8 @@ public class BackupOrchestrator
 
             try
             {
-                var outputPath = BuildOutputPath(config.OutputDirectory, environmentName, warsawJobTime, database);
+                var safeServer = SanitizeFileName(serverName ?? server.Server);
+                var outputPath = BuildOutputPath(config.OutputDirectory, environmentName, safeServer, warsawJobTime, database);
                 var directory = Path.GetDirectoryName(outputPath);
 
                 if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -176,7 +177,8 @@ public class BackupOrchestrator
                         await _jobClient.UpdateJobAsync(job);
                     }
                     _logger.LogInformation("Copying backup '{Database}' to Samba share", database);
-                    var sambaFolder = Path.Combine(config.Samba.SharePath, environmentName, jobTimestampFolder);
+                    var safeServerSamba = SanitizeFileName(serverName ?? server.Server);
+                    var sambaFolder = Path.Combine(config.Samba.SharePath, environmentName, safeServerSamba, jobTimestampFolder);
                     var sambaDestPath = Path.Combine(sambaFolder, Path.GetFileName(finalFilePath));
                     await _sambaService.CopyToShareAsync(finalFilePath, sambaDestPath, config.Samba);
                     finalFilePath = sambaDestPath;
@@ -258,12 +260,19 @@ public class BackupOrchestrator
         return result;
     }
 
-    public static string BuildOutputPath(string outputDirectory, string environmentName, DateTime warsawJobTime, string databaseName)
+    public static string BuildOutputPath(string outputDirectory, string environmentName, string serverName, DateTime warsawJobTime, string databaseName)
     {
         var folder = warsawJobTime.ToString("yyyy-MM-dd HH-mm-ss");
         var timestamp = warsawJobTime.ToString("yyyyMMdd_HHmmss");
         var fileName = $"{databaseName}_{timestamp}.bak";
-        return Path.Combine(outputDirectory, environmentName, folder, fileName);
+        var safeServer = SanitizeFileName(serverName);
+        return Path.Combine(outputDirectory, environmentName, safeServer, folder, fileName);
+    }
+
+    public static string BuildOutputPath(string outputDirectory, string environmentName, DateTime warsawJobTime, string databaseName)
+    {
+        // fallback when serverName not provided (legacy) -> treat environmentName as serverName
+        return BuildOutputPath(outputDirectory, environmentName, environmentName, warsawJobTime, databaseName);
     }
 
     // Backward compatible overload (for tests)
@@ -271,7 +280,21 @@ public class BackupOrchestrator
     {
         var warsawZone = GetWarsawZone();
         var warsawNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, warsawZone);
-        return BuildOutputPath(outputDirectory, instanceName, warsawNow, databaseName);
+        return BuildOutputPath(outputDirectory, instanceName, instanceName, warsawNow, databaseName);
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars().Concat(Path.GetInvalidPathChars()).Distinct().ToArray();
+        var safe = string.Join("_", name.Split(invalid, StringSplitOptions.RemoveEmptyEntries)).Trim();
+        if (string.IsNullOrWhiteSpace(safe)) safe = "Default";
+        // additionally replace characters not safe for SMB/Linux: \ / : * ? " < > |
+        foreach (var c in new[] { '\\', '/', ':', '*', '?', '"', '<', '>', '|' })
+            safe = safe.Replace(c, '_');
+        // replace ".\SQLEXPRESS" -> "_SQLEXPRESS"
+        safe = safe.Replace(".", "_").Trim('_');
+        if (safe.Length == 0) safe = "Default";
+        return safe;
     }
 
     private static TimeZoneInfo GetWarsawZone()

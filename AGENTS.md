@@ -389,7 +389,7 @@ docker compose logs -f api
 - Migracje EF Core znajdują się w projekcie API (Data/Migrations/)
 - Połączenie z bazą danych jest konfigurowane przez appsettings.json
 - BackupOrchestrator pomija domyślnie bazy systemowe (master, model, msdb, tempdb)
-- Pliki backupów są zapisywane w `[OutputDirectory]/[EnvironmentName]/[yyyy-MM-dd HH-mm-ss]/` (ta sama struktura lokalnie i na Sambie)
+- Pliki backupów są zapisywane w `[OutputDirectory]/[EnvironmentName]/[ServerName]/[yyyy-MM-dd HH-mm-ss]/` (ta sama struktura lokalnie i na Sambie)
 - Błędy podczas backupu pojedynczych baz są logowane, a operacja jest kontynuowana
 - W Dockerze API nasłuchuje na porcie 5000 (HTTP)
 - SQL Server w Dockerze używa domyślnie hasła z pliku .env
