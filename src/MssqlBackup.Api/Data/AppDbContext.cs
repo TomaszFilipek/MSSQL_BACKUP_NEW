@@ -10,6 +10,7 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<BackupRecord> BackupRecords { get; set; } = null!;
+    public DbSet<BackupJob> BackupJobs { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -25,6 +26,18 @@ public class AppDbContext : DbContext
             entity.Property(e => e.OutputFilePath).HasMaxLength(500);
             entity.HasIndex(e => e.BackupDate);
             entity.HasIndex(e => new { e.EnvironmentName, e.DatabaseName });
+        });
+
+        modelBuilder.Entity<BackupJob>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.EnvironmentName).HasMaxLength(100);
+            entity.Property(e => e.InstanceName).HasMaxLength(200);
+            entity.Property(e => e.HostName).HasMaxLength(200);
+            entity.Property(e => e.Status).HasMaxLength(50);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.UpdatedAt);
+            entity.HasIndex(e => new { e.EnvironmentName, e.InstanceName });
         });
     }
 }

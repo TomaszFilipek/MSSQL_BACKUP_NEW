@@ -14,6 +14,11 @@ builder.Services.AddHttpClient<BackupApiService>(client =>
     client.BaseAddress = new Uri(builder.Configuration["ApiSettings:BaseUrl"] ?? "http://localhost:8283");
 });
 
+builder.Services.AddHttpClient<BackupJobService>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["ApiSettings:BaseUrl"] ?? "http://localhost:8283");
+});
+
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo("/app/data/keys"))
     .SetApplicationName("MssqlBackup.Web");

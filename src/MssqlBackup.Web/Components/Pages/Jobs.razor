@@ -1,0 +1,269 @@
+@page "/jobs"
+@using MssqlBackup.Web.Models
+@using MssqlBackup.Web.Services
+@using Microsoft.AspNetCore.SignalR.Client
+@inject BackupJobService JobService
+@inject BackupApiService Api
+@implements IAsyncDisposable
+
+<PageTitle>MSSQL Backup - Status Konsoli</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3 class="mb-0">Status konsoli (live)</h3>
+    <div class="d-flex align-items-center gap-2">
+        <span class="@(_isConnected ? "status-connected" : "status-disconnected")">
+            <span class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></span>
+            @(_isConnected ? "Live" : "Offline")
+        </span>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="LoadData">Odśwież</button>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Ładowanie...</span>
+        </div>
+    </div>
+}
+else
+{
+    <h5 class="mb-3">
+        Aktywne zadania
+        <span class="badge bg-primary ms-2">@_activeJobs.Count</span>
+    </h5>
+
+    @if (!_activeJobs.Any())
+    {
+        <div class="alert alert-info">Brak aktywnych zadań - żadna instancja konsoli nie pracuje.</div>
+    }
+    else
+    {
+        <div class="row g-3 mb-4">
+            @foreach (var job in _activeJobs.OrderByDescending(j => j.StartedAt))
+            {
+                var progress = job.TotalDatabases > 0 ? (job.CompletedCount + job.FailedCount) * 100 / job.TotalDatabases : 0;
+                var elapsed = DateTime.UtcNow - job.StartedAt;
+                <div class="col-md-6 col-lg-4">
+                    <div class="card border-primary h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span>
+                                <span class="badge bg-info me-1">@job.EnvironmentName</span>
+                                <strong>@job.InstanceName</strong>
+                            </span>
+                            <span class="badge bg-success">
+                                <span class="spinner-grow spinner-grow-sm me-1" style="width:0.6rem;height:0.6rem;"></span>
+                                @job.Status
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="small text-muted mb-2">Host: @job.HostName | Start: @TimeHelper.ToWarsawTime(job.StartedAt).ToString("HH:mm:ss")</div>
+                            <div class="mb-2">
+                                <div class="d-flex justify-content-between small">
+                                    <span>Postęp: @job.CompletedCount/@job.TotalDatabases</span>
+                                    <span class="text-danger">@(job.FailedCount > 0 ? $"błędów: {job.FailedCount}" : "")</span>
+                                    <span>@progress%</span>
+                                </div>
+                                <div class="progress" style="height: 8px;">
+                                    <div class="progress-bar bg-success" style="width: @progress%"></div>
+                                </div>
+                            </div>
+                            <div class="mb-1">
+                                <small class="text-muted">Baza:</small>
+                                <strong>@(job.CurrentDatabase ?? "-")</strong>
+                            </div>
+                            <div class="mb-1">
+                                <small class="text-muted">Krok:</small>
+                                <span class="badge bg-secondary">@(job.CurrentStep ?? "-")</span>
+                            </div>
+                            @if (!string.IsNullOrEmpty(job.Message))
+                            {
+                                <div class="small text-muted mt-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="@job.Message">@job.Message</div>
+                            }
+                            <div class="small text-muted mt-2">Czas: @elapsed.ToString(@"hh\:mm\:ss") | Aktualizacja: @TimeHelper.ToWarsawTime(job.UpdatedAt).ToString("HH:mm:ss")</div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <h5 class="mb-3 mt-4">Ostatnie zadania</h5>
+
+    <div class="filter-bar">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-2">
+                <label class="form-label small">Środowisko</label>
+                <select class="form-select form-select-sm" @bind="_filterEnv" @bind:after="ApplyFilter">
+                    <option value="">Wszystkie</option>
+                    @foreach (var env in _environments)
+                    {
+                        <option value="@env">@env</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small">Status</label>
+                <select class="form-select form-select-sm" @bind="_filterStatus" @bind:after="ApplyFilter">
+                    <option value="">Wszystkie</option>
+                    <option value="Running">Running</option>
+                    <option value="Completed">Completed</option>
+                    <option value="CompletedWithErrors">CompletedWithErrors</option>
+                    <option value="Failed">Failed</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-sm btn-outline-secondary" @onclick="ResetFilter">Wyczyść</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Start</th>
+                    <th>Środowisko</th>
+                    <th>Instancja</th>
+                    <th>Host</th>
+                    <th>Status</th>
+                    <th>Bazy</th>
+                    <th>Czas</th>
+                    <th>Info</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var job in _filteredJobs)
+                {
+                    var statusClass = job.Status switch
+                    {
+                        "Running" => "bg-primary",
+                        "Completed" => "bg-success",
+                        "CompletedWithErrors" => "bg-warning text-dark",
+                        "Failed" => "bg-danger",
+                        _ => "bg-secondary"
+                    };
+                    var duration = job.FinishedAt.HasValue ? job.FinishedAt.Value - job.StartedAt : DateTime.UtcNow - job.StartedAt;
+                    <tr class="@(job.Status == "Running" ? "table-primary" : "")">
+                        <td class="text-nowrap">@TimeHelper.ToWarsawTime(job.StartedAt).ToString("dd.MM HH:mm:ss")</td>
+                        <td><span class="badge bg-info">@job.EnvironmentName</span></td>
+                        <td>@job.InstanceName</td>
+                        <td class="small text-muted">@job.HostName</td>
+                        <td><span class="badge @statusClass">@job.Status</span></td>
+                        <td>@job.CompletedCount/@job.TotalDatabases (@job.FailedCount err)</td>
+                        <td>@duration.ToString(@"hh\:mm\:ss")</td>
+                        <td class="small" title="@job.Message">@(job.Message?.Length > 40 ? job.Message[..40] + "..." : job.Message)</td>
+                    </tr>
+                }
+                @if (!_filteredJobs.Any())
+                {
+                    <tr><td colspan="8" class="text-center text-muted py-3">Brak zadań</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<BackupJobDto> _allJobs = [];
+    private List<BackupJobDto> _activeJobs = [];
+    private List<BackupJobDto> _filteredJobs = [];
+    private List<string> _environments = [];
+    private string? _filterEnv;
+    private string? _filterStatus;
+    private bool _loading = true;
+    private bool _isConnected;
+    private HubConnection? _hubConnection;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+        await SetupSignalR();
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        _allJobs = await JobService.GetRecentAsync(100);
+        _environments = _allJobs.Select(j => j.EnvironmentName).Distinct().OrderBy(e => e).ToList();
+        UpdateLists();
+        _loading = false;
+    }
+
+    private void UpdateLists()
+    {
+        _activeJobs = _allJobs.Where(j => j.Status == "Running").ToList();
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        var q = _allJobs.AsEnumerable();
+        if (!string.IsNullOrEmpty(_filterEnv))
+            q = q.Where(j => j.EnvironmentName == _filterEnv);
+        if (!string.IsNullOrEmpty(_filterStatus))
+            q = q.Where(j => j.Status == _filterStatus);
+        _filteredJobs = q.OrderByDescending(j => j.StartedAt).Take(50).ToList();
+    }
+
+    private void ResetFilter()
+    {
+        _filterEnv = null;
+        _filterStatus = null;
+        ApplyFilter();
+    }
+
+    private async Task SetupSignalR()
+    {
+        try
+        {
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(JobService.HubUrl)
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.On<BackupJobDto>("JobCreated", async (job) =>
+            {
+                _allJobs.RemoveAll(j => j.Id == job.Id);
+                _allJobs.Insert(0, job);
+                UpdateLists();
+                await InvokeAsync(StateHasChanged);
+            });
+
+            _hubConnection.On<BackupJobDto>("JobUpdated", async (job) =>
+            {
+                var idx = _allJobs.FindIndex(j => j.Id == job.Id);
+                if (idx >= 0) _allJobs[idx] = job;
+                else _allJobs.Insert(0, job);
+                UpdateLists();
+                await InvokeAsync(StateHasChanged);
+            });
+
+            _hubConnection.On<BackupJobDto>("JobFinished", async (job) =>
+            {
+                var idx = _allJobs.FindIndex(j => j.Id == job.Id);
+                if (idx >= 0) _allJobs[idx] = job;
+                else _allJobs.Insert(0, job);
+                UpdateLists();
+                await InvokeAsync(StateHasChanged);
+            });
+
+            _hubConnection.Reconnecting += _ => { _isConnected = false; return InvokeAsync(StateHasChanged); };
+            _hubConnection.Reconnected += _ => { _isConnected = true; return InvokeAsync(StateHasChanged); };
+
+            await _hubConnection.StartAsync();
+            _isConnected = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SignalR jobs failed: {ex.Message}");
+            _isConnected = false;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection != null) await _hubConnection.DisposeAsync();
+    }
+}

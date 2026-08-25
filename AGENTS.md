@@ -31,23 +31,29 @@ MSSQL_BACKUP_NEW/
     │   ├── MssqlBackup.Api.csproj
     │   ├── Program.cs
     │   ├── Controllers/
-    │   │   └── BackupRecordsController.cs  # CRUD + SignalR broadcast
+    │   │   ├── BackupRecordsController.cs  # CRUD + SignalR broadcast
+    │   │   └── BackupJobsController.cs     # CRUD dla live status konsoli
     │   ├── Hubs/
-    │   │   └── BackupHub.cs          # SignalR hub
+    │   │   └── BackupHub.cs          # SignalR hub (BackupCreated + JobUpdated)
     │   ├── Data/
     │   │   ├── AppDbContext.cs       # EF Core DbContext (SQLite)
     │   │   └── Migrations/           # Migracje EF Core
     │   ├── Models/
-    │   │   └── BackupRecord.cs       # Encja historii backupów
+    │   │   ├── BackupRecord.cs       # Encja historii backupów
+    │   │   └── BackupJob.cs          # Encja live statusu konsoli
     │   ├── appsettings.json
     │   └── appsettings.Development.json
     ├── MssqlBackup.Web/             # Blazor Server UI (.NET 9)
     │   ├── MssqlBackup.Web.csproj
     │   ├── Program.cs
     │   ├── Services/
-    │   │   └── BackupApiService.cs   # Klient HTTP do API
+    │   │   ├── BackupApiService.cs   # Klient HTTP do API (backuprecords)
+    │   │   └── BackupJobService.cs   # Klient HTTP do API (backupjobs)
     │   ├── Models/
-    │   │   └── BackupRecordDto.cs    # DTO + BackupFilter
+    │   │   ├── BackupRecordDto.cs    # DTO + BackupFilter
+    │   │   └── BackupJobDto.cs       # DTO dla live statusu
+    │   ├── Helpers/
+    │   │   └── TimeHelper.cs         # Konwersja UTC -> Europe/Warsaw
     │   ├── Hubs/
     │   │   └── BackupHub.cs          # SignalR hub client
     │   ├── Components/
@@ -59,12 +65,14 @@ MSSQL_BACKUP_NEW/
     │   │   └── Pages/
     │   │       ├── Home.razor        # Dashboard
     │   │       ├── Backups.razor     # Historia z filtrami
-    │   │       └── LatestBackups.razor # Ostatnie backupy
+    │   │       ├── LatestBackups.razor # Ostatnie backupy
+    │   │       ├── Jobs.razor        # Live status konsoli (aktywne + historia)
+    │   │       └── Test.razor        # Strona diagnostyczna
     │   ├── wwwroot/css/app.css
     │   └── appsettings.json
     └── MssqlBackup.Console/          # Aplikacja konsolowa (.NET 9 console)
         ├── MssqlBackup.Console.csproj
-        ├── Program.cs
+        ├── Program.cs                # Serilog file logging 14d rotation
         ├── appsettings.json           # Konfiguracja API, serwera, backupu, kompresji, Samba
         ├── appsettings.Local.json     # Local overrides (gitignored)
         ├── Models/
@@ -78,12 +86,14 @@ MSSQL_BACKUP_NEW/
         │   ├── BackupError.cs
         │   ├── ApiSettings.cs
         │   ├── BackupRecordDto.cs
-        │   ├── CompressionSettings.cs
+        │   ├── BackupJobDto.cs       # DTO live statusu
+        │   ├── CompressionSettings.cs # + DeleteSourceAfterCompress
         │   └── SambaSettings.cs
         └── Services/
             ├── BackupService.cs
-            ├── BackupOrchestrator.cs
+            ├── BackupOrchestrator.cs  # Raportuje progress do API (BackupJob)
             ├── BackupApiClient.cs
+            ├── BackupJobApiClient.cs  # Klient HTTP dla BackupJobs
             ├── CompressionService.cs
             └── SambaService.cs
 ```
@@ -103,24 +113,25 @@ MSSQL_BACKUP_NEW/
 | Project | References | NuGet Packages |
 |---------|-----------|----------------|
 | MssqlBackup.Shared | — | — |
-| MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Extensions.Http, Microsoft.Data.SqlClient |
-| MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.Sqlite, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore, Microsoft.AspNetCore.SignalR |
-| MssqlBackup.Web | MssqlBackup.Shared | Microsoft.AspNetCore.SignalR.Client |
+| MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Extensions.Http, Microsoft.Data.SqlClient, Serilog.Extensions.Hosting, Serilog.Sinks.Console, Serilog.Sinks.File |
+| MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.Sqlite, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore |
+| MssqlBackup.Web | MssqlBackup.Shared | Microsoft.AspNetCore.SignalR.Client (9.0.10) |
 
 ## Console App Architecture
 
 ### Kluczowe klasy
 - **BackupService** - wykonuje backupy pojedynczych baz (BACKUP DATABASE)
-- **BackupOrchestrator** - orchestruje backup wszystkich baz na serwerze
+- **BackupOrchestrator** - orchestruje backup wszystkich baz + raportuje live status do API (BackupJob)
 - **BackupApiClient** - klient HTTP do wysyłania rekordów do REST API
-- **CompressionService** - kompresja plików 7-Zip (z obsługą hasła)
+- **BackupJobApiClient** - klient HTTP do raportowania live statusu (BackupJob: Running/Completed)
+- **CompressionService** - kompresja plików 7-Zip (z obsługą hasła + DeleteSourceAfterCompress)
 - **SambaService** - wysyłka backupów na udziały sieciowe Samba
 - **ServerConnection** - dane połączenia (Server, Username, Password, UseWindowsAuth)
 - **BackupConfiguration** - konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify)
 - **BackupOptions** - parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
 - **BackupResult** - wynik operacji (TotalDatabases, SuccessfulBackups, FailedBackups, Errors)
 - **ApiSettings** - ustawienia API (BaseUrl, EnvironmentName)
-- **CompressionSettings** - ustawienia kompresji (Compress, Password, CompressionLevel)
+- **CompressionSettings** - ustawienia kompresji (Compress, Password, CompressionLevel, DeleteSourceAfterCompress)
 - **SambaSettings** - ustawienia Samba (Enabled, SharePath, DeleteSourceAfterCopy, CreateOkFile)
 
 ### Przykład użycia
@@ -139,7 +150,8 @@ var config = new BackupConfiguration
     {
         Compress = true,
         Password = "MySecretPassword123",
-        CompressionLevel = "Normal"
+        CompressionLevel = "Normal",
+        DeleteSourceAfterCompress = true
     },
     Samba = new SambaSettings
     {
@@ -162,19 +174,37 @@ var result = await orchestrator.BackupAllDatabasesAsync(server, config, environm
 | GET | `/api/backuprecords` | Lista (filtry: environment, instance, database, from, to) |
 | GET | `/api/backuprecords/latest` | Ostatni backup każdej bazy |
 | GET | `/api/backuprecords/{id}` | Pojedynczy rekord |
-| POST | `/api/backuprecords` | Utwórz |
+| POST | `/api/backuprecords` | Utwórz (+ broadcast `BackupCreated`) |
 | PUT | `/api/backuprecords/{id}` | Aktualizuj |
 | DELETE | `/api/backuprecords/{id}` | Usuń |
+
+### BackupJobsController (live status konsoli)
+
+| Method | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/backupjobs` | Lista (filtry: environment, instance, status, take) |
+| GET | `/api/backupjobs/active` | Tylko `Running` |
+| GET | `/api/backupjobs/{id}` | Pojedynczy job |
+| POST | `/api/backupjobs` | Utwórz (broadcast `JobCreated` + `JobUpdated`) |
+| PUT | `/api/backupjobs/{id}` | Aktualizuj (broadcast `JobUpdated`/`JobFinished`) |
+| DELETE | `/api/backupjobs/{id}` | Usuń |
 
 ### BackupRecord Model
 - EnvironmentName, InstanceName, DatabaseName, BackupType
 - OutputFilePath, FileSize, BackupDate
 - Compress, Verify, Duration
 
+### BackupJob Model (live)
+- EnvironmentName, InstanceName, HostName, Status (Running/Completed/Failed)
+- StartedAt, FinishedAt, UpdatedAt (UTC)
+- TotalDatabases, CompletedCount, FailedCount
+- CurrentDatabase, CurrentStep, Message
+
 ### Konfiguracja
 - **CORS**: AllowAnyOrigin (dla instancji konsolowych na VPS)
 - **AutoMigrate**: Automatyczna migracja przy starcie
 - **API Documentation**: Scalar (zamiast Swagger UI) - dostępne pod `/scalar/v1` w trybie Development
+- **SignalR**: `/hubs/backup` - `BackupCreated`, `JobCreated`, `JobUpdated`, `JobFinished`
 
 ## Development
 
@@ -260,7 +290,8 @@ dotnet ef database update --project src/MssqlBackup.Api
   "CompressionSettings": {
     "Compress": true,
     "Password": "",
-    "CompressionLevel": "Normal"
+    "CompressionLevel": "Normal",
+    "DeleteSourceAfterCompress": false
   },
   "SambaSettings": {
     "Enabled": false,
