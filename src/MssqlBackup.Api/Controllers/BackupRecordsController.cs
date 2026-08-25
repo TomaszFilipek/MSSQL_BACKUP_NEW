@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using MssqlBackup.Api.Data;
+using MssqlBackup.Api.Hubs;
 using MssqlBackup.Api.Models;
 
 namespace MssqlBackup.Api.Controllers;
@@ -10,10 +12,12 @@ namespace MssqlBackup.Api.Controllers;
 public class BackupRecordsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IHubContext<BackupHub> _hubContext;
 
-    public BackupRecordsController(AppDbContext context)
+    public BackupRecordsController(AppDbContext context, IHubContext<BackupHub> hubContext)
     {
         _context = context;
+        _hubContext = hubContext;
     }
 
     [HttpGet]
@@ -45,9 +49,15 @@ public class BackupRecordsController : ControllerBase
     }
 
     [HttpGet("latest")]
-    public async Task<ActionResult<IEnumerable<BackupRecord>>> GetLatestBackups()
+    public async Task<ActionResult<IEnumerable<BackupRecord>>> GetLatestBackups(
+        [FromQuery] string? environment = null)
     {
-        var latestRecords = await _context.BackupRecords
+        var query = _context.BackupRecords.AsQueryable();
+
+        if (!string.IsNullOrEmpty(environment))
+            query = query.Where(r => r.EnvironmentName == environment);
+
+        var latestRecords = await query
             .GroupBy(r => new { r.EnvironmentName, r.DatabaseName })
             .Select(g => g.OrderByDescending(r => r.BackupDate).First())
             .ToListAsync();
@@ -71,6 +81,8 @@ public class BackupRecordsController : ControllerBase
     {
         _context.BackupRecords.Add(record);
         await _context.SaveChangesAsync();
+
+        await _hubContext.Clients.All.SendAsync("BackupCreated", record);
 
         return CreatedAtAction(nameof(GetBackupRecord), new { id = record.Id }, record);
     }

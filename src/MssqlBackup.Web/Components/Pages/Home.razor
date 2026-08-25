@@ -1,0 +1,201 @@
+﻿@page "/"
+@using MssqlBackup.Web.Models
+@using MssqlBackup.Web.Services
+@using MssqlBackup.Web.Hubs
+@using Microsoft.AspNetCore.SignalR.Client
+@inject BackupApiService Api
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<PageTitle>MSSQL Backup - Dashboard</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3 class="mb-0">Dashboard</h3>
+    <span class="@(_isConnected ? "status-connected" : "status-disconnected")">
+        <span class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></span>
+        @(_isConnected ? "Połączono" : "Rozłączono")
+    </span>
+</div>
+
+@if (_loading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Ładowanie...</span>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card card-stat primary">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">Backupów dziś</h6>
+                    <h2 class="card-title mb-0">@_todayCount</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-stat success">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">Łącznie backupów</h6>
+                    <h2 class="card-title mb-0">@_totalCount</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-stat warning">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">Ostatni backup</h6>
+                    <h6 class="card-title mb-0">@(_lastBackup?.BackupDate.ToString("dd.MM.yyyy HH:mm") ?? "Brak")</h6>
+                    <small class="text-muted">@(_lastBackup?.DatabaseName ?? "")</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-stat info">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">Środowiska</h6>
+                    <h2 class="card-title mb-0">@_environments.Count</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Ostatnie 5 backupów</span>
+            <a href="backups" class="btn btn-sm btn-outline-primary">Zobacz wszystkie</a>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Data</th>
+                        <th>Baza</th>
+                        <th>Instancja</th>
+                        <th>Typ</th>
+                        <th>Rozmiar</th>
+                        <th>Czas</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var record in _recentRecords)
+                    {
+                        <tr>
+                            <td>@record.BackupDate.ToString("dd.MM.yyyy HH:mm:ss")</td>
+                            <td><strong>@record.DatabaseName</strong></td>
+                            <td>@record.InstanceName</td>
+                            <td>
+                                <span class="badge @(record.BackupType == "Full" ? "bg-primary" : "bg-secondary")">
+                                    @record.BackupType
+                                </span>
+                            </td>
+                            <td>@FormatSize(record.FileSize)</td>
+                            <td>@record.Duration.TotalSeconds.ToString("F1")s</td>
+                        </tr>
+                    }
+                    @if (!_recentRecords.Any())
+                    {
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-3">Brak backupów</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    private List<BackupRecordDto> _recentRecords = [];
+    private List<string> _environments = [];
+    private BackupRecordDto? _lastBackup;
+    private bool _loading = true;
+    private bool _isConnected;
+    private HubConnection? _hubConnection;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+        await SetupSignalR();
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        try
+        {
+            var allRecords = await Api.GetRecordsAsync();
+            _recentRecords = allRecords.OrderByDescending(r => r.BackupDate).Take(5).ToList();
+            _lastBackup = _recentRecords.FirstOrDefault();
+            _todayCount = allRecords.Count(r => r.BackupDate.Date == DateTime.Today);
+            _totalCount = allRecords.Count;
+            _environments = allRecords.Select(r => r.EnvironmentName).Distinct().ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading data: {ex.Message}");
+        }
+        _loading = false;
+    }
+
+    private int _todayCount;
+    private int _totalCount;
+
+    private async Task SetupSignalR()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
+        {
+            _recentRecords.Insert(0, record);
+            if (_recentRecords.Count > 5)
+                _recentRecords.RemoveAt(5);
+
+            _lastBackup = record;
+            _todayCount++;
+            _totalCount++;
+
+            await InvokeAsync(StateHasChanged);
+        });
+
+        _hubConnection.Reconnecting += _ =>
+        {
+            _isConnected = false;
+            return InvokeAsync(StateHasChanged);
+        };
+
+        _hubConnection.Reconnected += _ =>
+        {
+            _isConnected = true;
+            return InvokeAsync(StateHasChanged);
+        };
+
+        await _hubConnection.StartAsync();
+        _isConnected = true;
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        return bytes switch
+        {
+            < 1024 => $"{bytes} B",
+            < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+            < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+            _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB"
+        };
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection != null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+}

@@ -13,5 +13,19 @@ services:
       - api-data:/app/data
     restart: unless-stopped
 
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: mssqlbackup-web
+    ports:
+      - "8284:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ApiSettings__BaseUrl=http://api:5000
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   api-data:

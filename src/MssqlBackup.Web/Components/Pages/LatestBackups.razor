@@ -1,0 +1,201 @@
+@page "/latest"
+@using MssqlBackup.Web.Models
+@using MssqlBackup.Web.Services
+@using MssqlBackup.Web.Hubs
+@using Microsoft.AspNetCore.SignalR.Client
+@inject BackupApiService Api
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<PageTitle>MSSQL Backup - Ostatnie backupy</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3 class="mb-0">Ostatnie backupy</h3>
+    <span class="@(_isConnected ? "status-connected" : "status-disconnected")">
+        <span class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></span>
+        @(_isConnected ? "Live" : "Offline")
+    </span>
+</div>
+
+<div class="filter-bar">
+    <div class="row g-2 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label small">Środowisko</label>
+            <select class="form-select form-select-sm" @bind="_selectedEnvironment" @bind:after="LoadLatest">
+                <option value="">Wszystkie</option>
+                @foreach (var env in _environments)
+                {
+                    <option value="@env">@env</option>
+                }
+            </select>
+        </div>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Ładowanie...</span>
+        </div>
+    </div>
+}
+else
+{
+    <div class="table-container">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Baza danych</th>
+                    <th>Instancja</th>
+                    <th>Środowisko</th>
+                    <th>Ostatni backup</th>
+                    <th>Typ</th>
+                    <th>Rozmiar</th>
+                    <th>Kompresja</th>
+                    <th>Wiek</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var record in _latestRecords)
+                {
+                    var age = DateTime.Now - record.BackupDate;
+                    var ageClass = age.TotalHours < 24 ? "age-green" : age.TotalHours < 48 ? "age-yellow" : "age-red";
+                    var ageText = age.TotalHours < 1
+                        ? $"{age.Minutes}m"
+                        : age.TotalHours < 24
+                            ? $"{age.TotalHours:F0}h"
+                            : $"{age.TotalDays:F0}d";
+
+                    <tr>
+                        <td><strong>@record.DatabaseName</strong></td>
+                        <td>@record.InstanceName</td>
+                        <td><span class="badge bg-info">@record.EnvironmentName</span></td>
+                        <td class="text-nowrap">@record.BackupDate.ToString("dd.MM.yyyy HH:mm:ss")</td>
+                        <td>
+                            <span class="badge @(record.BackupType == "Full" ? "bg-primary" : "bg-secondary")">
+                                @record.BackupType
+                            </span>
+                        </td>
+                        <td>@FormatSize(record.FileSize)</td>
+                        <td>
+                            @if (record.Compress)
+                            {
+                                <span class="text-muted" title="Przed: @FormatSize(record.FileSizeBeforeCompression) | Po: @FormatSize(record.FileSizeAfterCompression)">
+                                    @GetCompressionRatio(record)
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">-</span>
+                            }
+                        </td>
+                        <td>
+                            <span class="@ageClass fw-bold">@ageText</span>
+                        </td>
+                    </tr>
+                }
+                @if (!_latestRecords.Any())
+                {
+                    <tr>
+                        <td colspan="8" class="text-center text-muted py-3">Brak backupów</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<BackupRecordDto> _latestRecords = [];
+    private List<string> _environments = [];
+    private string? _selectedEnvironment;
+    private bool _loading = true;
+    private bool _isConnected;
+    private HubConnection? _hubConnection;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+        await SetupSignalR();
+    }
+
+    private async Task LoadData()
+    {
+        _environments = await Api.GetEnvironmentsAsync();
+        await LoadLatest();
+    }
+
+    private async Task LoadLatest()
+    {
+        _loading = true;
+        _latestRecords = await Api.GetLatestAsync(_selectedEnvironment);
+        _latestRecords = _latestRecords.OrderByDescending(r => r.BackupDate).ToList();
+        _loading = false;
+    }
+
+    private async Task SetupSignalR()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
+        {
+            var existing = _latestRecords.FirstOrDefault(r => r.DatabaseName == record.DatabaseName && r.InstanceName == record.InstanceName);
+            if (existing != null)
+            {
+                var index = _latestRecords.IndexOf(existing);
+                _latestRecords[index] = record;
+            }
+            else
+            {
+                _latestRecords.Add(record);
+            }
+            _latestRecords = _latestRecords.OrderByDescending(r => r.BackupDate).ToList();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        _hubConnection.Reconnecting += _ =>
+        {
+            _isConnected = false;
+            return InvokeAsync(StateHasChanged);
+        };
+
+        _hubConnection.Reconnected += _ =>
+        {
+            _isConnected = true;
+            return InvokeAsync(StateHasChanged);
+        };
+
+        await _hubConnection.StartAsync();
+        _isConnected = true;
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        return bytes switch
+        {
+            < 1024 => $"{bytes} B",
+            < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+            < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+            _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB"
+        };
+    }
+
+    private static string GetCompressionRatio(BackupRecordDto record)
+    {
+        if (record.FileSizeBeforeCompression == 0) return "-";
+        var ratio = (1.0 - (double)record.FileSizeAfterCompression / record.FileSizeBeforeCompression) * 100;
+        return $"-{ratio:F0}%";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection != null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+}

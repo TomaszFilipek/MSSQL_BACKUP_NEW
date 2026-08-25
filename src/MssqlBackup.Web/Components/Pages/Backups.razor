@@ -1,0 +1,330 @@
+@page "/backups"
+@using MssqlBackup.Web.Models
+@using MssqlBackup.Web.Services
+@using MssqlBackup.Web.Hubs
+@using Microsoft.AspNetCore.SignalR.Client
+@inject BackupApiService Api
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<PageTitle>MSSQL Backup - Historia</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3 class="mb-0">Historia backupów</h3>
+    <span class="@(_isConnected ? "status-connected" : "status-disconnected")">
+        <span class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></span>
+        @(_isConnected ? "Live" : "Offline")
+    </span>
+</div>
+
+<div class="filter-bar">
+    <div class="row g-2 align-items-end">
+        <div class="col-md-2">
+            <label class="form-label small">Środowisko</label>
+            <select class="form-select form-select-sm" @bind="_filter.Environment" @bind:after="ApplyFilter">
+                <option value="">Wszystkie</option>
+                @foreach (var env in _environments)
+                {
+                    <option value="@env">@env</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Instancja</label>
+            <select class="form-select form-select-sm" @bind="_filter.Instance" @bind:after="ApplyFilter">
+                <option value="">Wszystkie</option>
+                @foreach (var inst in _instances)
+                {
+                    <option value="@inst">@inst</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Baza danych</label>
+            <input type="text" class="form-control form-control-sm" placeholder="Szukaj..."
+                   @bind="_filter.Database" @bind:after="ApplyFilter" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Data od</label>
+            <input type="date" class="form-control form-control-sm"
+                   @bind="_filter.From" @bind:after="ApplyFilter" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Data do</label>
+            <input type="date" class="form-control form-control-sm"
+                   @bind="_filter.To" @bind:after="ApplyFilter" />
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-sm btn-outline-secondary w-100" @onclick="ResetFilters">
+                Wyczyść filtry
+            </button>
+        </div>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Ładowanie...</span>
+        </div>
+    </div>
+}
+else
+{
+    <div class="table-container">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th @onclick="() => SortBy(nameof(BackupRecordDto.BackupDate))" style="cursor:pointer">
+                        Data @GetSortIcon(nameof(BackupRecordDto.BackupDate))
+                    </th>
+                    <th @onclick="() => SortBy(nameof(BackupRecordDto.DatabaseName))" style="cursor:pointer">
+                        Baza @GetSortIcon(nameof(BackupRecordDto.DatabaseName))
+                    </th>
+                    <th>Instancja</th>
+                    <th>Środowisko</th>
+                    <th>Typ</th>
+                    <th @onclick="() => SortBy(nameof(BackupRecordDto.FileSize))" style="cursor:pointer">
+                        Rozmiar @GetSortIcon(nameof(BackupRecordDto.FileSize))
+                    </th>
+                    <th>Kompresja</th>
+                    <th @onclick="() => SortBy(nameof(BackupRecordDto.Duration))" style="cursor:pointer">
+                        Czas @GetSortIcon(nameof(BackupRecordDto.Duration))
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var record in _pagedRecords)
+                {
+                    <tr>
+                        <td class="text-nowrap">@record.BackupDate.ToString("dd.MM.yyyy HH:mm:ss")</td>
+                        <td><strong>@record.DatabaseName</strong></td>
+                        <td>@record.InstanceName</td>
+                        <td><span class="badge bg-info">@record.EnvironmentName</span></td>
+                        <td>
+                            <span class="badge @(record.BackupType == "Full" ? "bg-primary" : "bg-secondary")">
+                                @record.BackupType
+                            </span>
+                        </td>
+                        <td>@FormatSize(record.FileSize)</td>
+                        <td>
+                            @if (record.Compress)
+                            {
+                                <span class="text-muted" title="Przed: @FormatSize(record.FileSizeBeforeCompression) | Po: @FormatSize(record.FileSizeAfterCompression)">
+                                    @GetCompressionRatio(record)
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">-</span>
+                            }
+                        </td>
+                        <td>@record.Duration.TotalSeconds.ToString("F1")s</td>
+                    </tr>
+                }
+                @if (!_pagedRecords.Any())
+                {
+                    <tr>
+                        <td colspan="8" class="text-center text-muted py-3">Brak wyników</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mt-3">
+        <small class="text-muted">Wyświetlanie @((_currentPage - 1) * _pageSize + 1)-@(Math.Min(_currentPage * _pageSize, _filteredRecords.Count)) z @_filteredRecords.Count</small>
+        <nav>
+            <ul class="pagination pagination-sm mb-0">
+                <li class="page-item @(_currentPage == 1 ? "disabled" : "")">
+                    <button class="page-link" @onclick="() => ChangePage(_currentPage - 1)">Poprzednia</button>
+                </li>
+                @for (var i = 1; i <= _totalPages; i++)
+                {
+                    var pageNum = i;
+                    <li class="page-item @(pageNum == _currentPage ? "active" : "")">
+                        <button class="page-link" @onclick="() => ChangePage(pageNum)">@pageNum</button>
+                    </li>
+                }
+                <li class="page-item @(_currentPage == _totalPages ? "disabled" : "")">
+                    <button class="page-link" @onclick="() => ChangePage(_currentPage + 1)">Następna</button>
+                </li>
+            </ul>
+        </nav>
+    </div>
+}
+
+@code {
+    private List<BackupRecordDto> _allRecords = [];
+    private List<BackupRecordDto> _filteredRecords = [];
+    private List<BackupRecordDto> _pagedRecords = [];
+    private List<string> _environments = [];
+    private List<string> _instances = [];
+    private BackupFilter _filter = new();
+    private bool _loading = true;
+    private bool _isConnected;
+    private HubConnection? _hubConnection;
+
+    private int _currentPage = 1;
+    private int _pageSize = 25;
+    private int _totalPages => (int)Math.Ceiling((double)_filteredRecords.Count / _pageSize);
+
+    private string _sortColumn = nameof(BackupRecordDto.BackupDate);
+    private bool _sortDescending = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+        await SetupSignalR();
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        _allRecords = await Api.GetRecordsAsync();
+        _environments = _allRecords.Select(r => r.EnvironmentName).Distinct().OrderBy(e => e).ToList();
+        _instances = _allRecords.Select(r => r.InstanceName).Distinct().OrderBy(i => i).ToList();
+        ApplyFilter();
+        _loading = false;
+    }
+
+    private void ApplyFilter()
+    {
+        var query = _allRecords.AsEnumerable();
+
+        if (!string.IsNullOrEmpty(_filter.Environment))
+            query = query.Where(r => r.EnvironmentName == _filter.Environment);
+        if (!string.IsNullOrEmpty(_filter.Instance))
+            query = query.Where(r => r.InstanceName == _filter.Instance);
+        if (!string.IsNullOrEmpty(_filter.Database))
+            query = query.Where(r => r.DatabaseName.Contains(_filter.Database, StringComparison.OrdinalIgnoreCase));
+        if (_filter.From.HasValue)
+            query = query.Where(r => r.BackupDate >= _filter.From!.Value);
+        if (_filter.To.HasValue)
+            query = query.Where(r => r.BackupDate <= _filter.To!.Value.AddDays(1));
+
+        _filteredRecords = query.ToList();
+
+        ApplySorting();
+        _currentPage = 1;
+        UpdatePagedRecords();
+    }
+
+    private void ApplySorting()
+    {
+        _filteredRecords = _sortColumn switch
+        {
+            nameof(BackupRecordDto.BackupDate) => _sortDescending
+                ? _filteredRecords.OrderByDescending(r => r.BackupDate).ToList()
+                : _filteredRecords.OrderBy(r => r.BackupDate).ToList(),
+            nameof(BackupRecordDto.DatabaseName) => _sortDescending
+                ? _filteredRecords.OrderByDescending(r => r.DatabaseName).ToList()
+                : _filteredRecords.OrderBy(r => r.DatabaseName).ToList(),
+            nameof(BackupRecordDto.FileSize) => _sortDescending
+                ? _filteredRecords.OrderByDescending(r => r.FileSize).ToList()
+                : _filteredRecords.OrderBy(r => r.FileSize).ToList(),
+            nameof(BackupRecordDto.Duration) => _sortDescending
+                ? _filteredRecords.OrderByDescending(r => r.Duration).ToList()
+                : _filteredRecords.OrderBy(r => r.Duration).ToList(),
+            _ => _filteredRecords
+        };
+    }
+
+    private void SortBy(string column)
+    {
+        if (_sortColumn == column)
+            _sortDescending = !_sortDescending;
+        else
+        {
+            _sortColumn = column;
+            _sortDescending = true;
+        }
+
+        ApplySorting();
+        UpdatePagedRecords();
+    }
+
+    private string GetSortIcon(string column)
+    {
+        if (_sortColumn != column) return "";
+        return _sortDescending ? "↓" : "↑";
+    }
+
+    private void UpdatePagedRecords()
+    {
+        _pagedRecords = _filteredRecords
+            .Skip((_currentPage - 1) * _pageSize)
+            .Take(_pageSize)
+            .ToList();
+    }
+
+    private void ChangePage(int page)
+    {
+        if (page < 1 || page > _totalPages) return;
+        _currentPage = page;
+        UpdatePagedRecords();
+    }
+
+    private void ResetFilters()
+    {
+        _filter = new BackupFilter();
+        ApplyFilter();
+    }
+
+    private async Task SetupSignalR()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
+        {
+            _allRecords.Insert(0, record);
+            ApplyFilter();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        _hubConnection.Reconnecting += _ =>
+        {
+            _isConnected = false;
+            return InvokeAsync(StateHasChanged);
+        };
+
+        _hubConnection.Reconnected += _ =>
+        {
+            _isConnected = true;
+            return InvokeAsync(StateHasChanged);
+        };
+
+        await _hubConnection.StartAsync();
+        _isConnected = true;
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        return bytes switch
+        {
+            < 1024 => $"{bytes} B",
+            < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+            < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+            _ => $"{bytes / (1024.0 * 1024 * 1024):F2} GB"
+        };
+    }
+
+    private static string GetCompressionRatio(BackupRecordDto record)
+    {
+        if (record.FileSizeBeforeCompression == 0) return "-";
+        var ratio = (1.0 - (double)record.FileSizeAfterCompression / record.FileSizeBeforeCompression) * 100;
+        return $"-{ratio:F0}%";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection != null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+}

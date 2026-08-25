@@ -1,0 +1,19 @@
+﻿@inherits LayoutComponentBase
+
+<div class="d-flex" style="min-height: 100vh;">
+    <nav class="bg-dark text-white p-3" style="width: 250px; min-height: 100vh;">
+        <div class="mb-4">
+            <h5 class="text-white mb-0">
+                <span class="bi bi-database me-2"></span>MSSQL Backup
+            </h5>
+            <small class="text-muted">Panel zarządzania</small>
+        </div>
+        <NavMenu />
+    </nav>
+
+    <main class="flex-grow-1 bg-light">
+        <div class="p-4">
+            @Body
+        </div>
+    </main>
+</div>

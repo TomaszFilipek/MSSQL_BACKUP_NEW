@@ -1,12 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
 using MssqlBackup.Api.Data;
+using MssqlBackup.Api.Hubs;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+builder.Services.AddSignalR();
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -47,6 +49,7 @@ app.UseCors();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<BackupHub>("/hubs/backup");
 
 using (var scope = app.Services.CreateScope())
 {

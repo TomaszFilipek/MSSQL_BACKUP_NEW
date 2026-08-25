@@ -14,9 +14,14 @@ MSSQL_BACKUP_NEW - projekt do zarządzania kopiami zapasowymi baz danych MSSQL.
 
 ```
 MSSQL_BACKUP_NEW/
-├── MSSQL_BACKUP_NEW.sln
+├── MSSQL_BACKUP_NEW.slnx
 ├── .gitignore
 ├── README.md
+├── Dockerfile                 # Multi-stage build dla API
+├── Dockerfile.web             # Multi-stage build dla Web
+├── docker-compose.yml         # API + Web + wolumen dla SQLite
+├── .dockerignore
+├── deploy-to-nas.ps1          # Skrypt deploy na NAS (PuTTY)
 └── src/
     ├── MssqlBackup.Shared/           # Współdzielona biblioteka (.NET 9 class library)
     │   ├── MssqlBackup.Shared.csproj
@@ -26,37 +31,61 @@ MSSQL_BACKUP_NEW/
     │   ├── MssqlBackup.Api.csproj
     │   ├── Program.cs
     │   ├── Controllers/
-    │   │   └── BackupRecordsController.cs  # CRUD dla historii backupów
+    │   │   └── BackupRecordsController.cs  # CRUD + SignalR broadcast
+    │   ├── Hubs/
+    │   │   └── BackupHub.cs          # SignalR hub
     │   ├── Data/
-    │   │   ├── AppDbContext.cs       # EF Core DbContext
+    │   │   ├── AppDbContext.cs       # EF Core DbContext (SQLite)
     │   │   └── Migrations/           # Migracje EF Core
     │   ├── Models/
     │   │   └── BackupRecord.cs       # Encja historii backupów
     │   ├── appsettings.json
     │   └── appsettings.Development.json
+    ├── MssqlBackup.Web/             # Blazor Server UI (.NET 9)
+    │   ├── MssqlBackup.Web.csproj
+    │   ├── Program.cs
+    │   ├── Services/
+    │   │   └── BackupApiService.cs   # Klient HTTP do API
+    │   ├── Models/
+    │   │   └── BackupRecordDto.cs    # DTO + BackupFilter
+    │   ├── Hubs/
+    │   │   └── BackupHub.cs          # SignalR hub client
+    │   ├── Components/
+    │   │   ├── App.razor
+    │   │   ├── _Imports.razor
+    │   │   ├── Layout/
+    │   │   │   ├── MainLayout.razor
+    │   │   │   └── NavMenu.razor
+    │   │   └── Pages/
+    │   │       ├── Home.razor        # Dashboard
+    │   │       ├── Backups.razor     # Historia z filtrami
+    │   │       └── LatestBackups.razor # Ostatnie backupy
+    │   ├── wwwroot/css/app.css
+    │   └── appsettings.json
     └── MssqlBackup.Console/          # Aplikacja konsolowa (.NET 9 console)
         ├── MssqlBackup.Console.csproj
         ├── Program.cs
         ├── appsettings.json           # Konfiguracja API, serwera, backupu, kompresji, Samba
+        ├── appsettings.Local.json     # Local overrides (gitignored)
         ├── Models/
-        │   ├── BackupType.cs          # enum: Full, Differential
-        │   ├── BackupOptions.cs       # Parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
-        │   ├── BackupConfiguration.cs # Konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify, Samba)
-        │   ├── BackupSettings.cs      # Ustawienia backupu z appsettings.json
-        │   ├── ServerConnection.cs    # Dane połączenia z serwerem SQL
-        │   ├── ServerSettings.cs      # Ustawienia serwera SQL z appsettings.json
-        │   ├── BackupResult.cs        # Wynik operacji backupu
-        │   ├── BackupError.cs         # Informacja o błędzie
-        │   ├── ApiSettings.cs         # Ustawienia API (BaseUrl, EnvironmentName)
-        │   ├── BackupRecordDto.cs     # DTO do komunikacji z API
-        │   ├── CompressionSettings.cs # Ustawienia kompresji (Compress, Password, CompressionLevel)
-        │   └── SambaSettings.cs       # Ustawienia Samba (Enabled, SharePath, DeleteSourceAfterCopy, CreateOkFile)
+        │   ├── BackupType.cs
+        │   ├── BackupOptions.cs
+        │   ├── BackupConfiguration.cs
+        │   ├── BackupSettings.cs
+        │   ├── ServerConnection.cs
+        │   ├── ServerSettings.cs
+        │   ├── BackupResult.cs
+        │   ├── BackupError.cs
+        │   ├── ApiSettings.cs
+        │   ├── BackupRecordDto.cs
+        │   ├── CompressionSettings.cs
+        │   └── SambaSettings.cs
         └── Services/
-            ├── BackupService.cs       # Wykonywanie backupów (BACKUP DATABASE)
-            ├── BackupOrchestrator.cs  # Orchestration backupu wszystkich baz
-            ├── BackupApiClient.cs     # Klient HTTP do wysyłania rekordów do API
-            ├── CompressionService.cs  # Kompresja plików 7-Zip (z obsługą hasła)
-            └── SambaService.cs        # Wysyłka backupów na udziały sieciowe Samba
+            ├── BackupService.cs
+            ├── BackupOrchestrator.cs
+            ├── BackupApiClient.cs
+            ├── CompressionService.cs
+            └── SambaService.cs
 ```
 
 ## Key Technical Decisions
@@ -75,7 +104,7 @@ MSSQL_BACKUP_NEW/
 |---------|-----------|----------------|
 | MssqlBackup.Shared | — | — |
 | MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Extensions.Http, Microsoft.Data.SqlClient |
-| MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.Sqlite, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore |
+| MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.Sqlite, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore, Microsoft.AspNetCore.SignalR |
 
 ## Console App Architecture
 
@@ -268,7 +297,8 @@ configuration.GetSection("SambaSettings").Bind(sambaSettings);
 ```
 MSSQL_BACKUP_NEW/
 ├── Dockerfile              # Multi-stage build dla API
-├── docker-compose.yml      # API + wolumen dla SQLite
+├── Dockerfile.web          # Multi-stage build dla Web
+├── docker-compose.yml      # API + Web + wolumen dla SQLite
 ├── .dockerignore           # Wykluczenia z kontekstu buildu
 └── deploy-to-nas.ps1       # Skrypt deploy na NAS (PuTTY)
 ```
