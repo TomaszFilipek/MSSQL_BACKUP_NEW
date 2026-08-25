@@ -13,6 +13,18 @@ var configuration = new ConfigurationBuilder()
 var apiSettings = new ApiSettings();
 configuration.GetSection("ApiSettings").Bind(apiSettings);
 
+var serverSettings = new ServerSettings();
+configuration.GetSection("ServerSettings").Bind(serverSettings);
+
+var backupSettings = new BackupSettings();
+configuration.GetSection("BackupSettings").Bind(backupSettings);
+
+var compressionSettings = new CompressionSettings();
+configuration.GetSection("CompressionSettings").Bind(compressionSettings);
+
+var sambaSettings = new SambaSettings();
+configuration.GetSection("SambaSettings").Bind(sambaSettings);
+
 var services = new ServiceCollection();
 services.AddSingleton<IConfiguration>(configuration);
 services.AddLogging(builder =>
@@ -35,30 +47,22 @@ var orchestrator = serviceProvider.GetRequiredService<BackupOrchestrator>();
 
 var server = new ServerConnection
 {
-    Server = @".\SQLEXPRESS",
-    UseWindowsAuth = true
+    Server = serverSettings.Server,
+    Database = serverSettings.Database,
+    Username = serverSettings.Username,
+    Password = serverSettings.Password,
+    UseWindowsAuth = serverSettings.UseWindowsAuth
 };
 
 var config = new BackupConfiguration
 {
-    OutputDirectory = @"C:\Backups\MSSQL",
-    DefaultType = BackupType.Full,
-    Compress = true,
-    Verify = true,
-    ExcludeDatabases = ["master", "model", "msdb", "tempdb"],
-    PostBackupCompression = new CompressionSettings
-    {
-        Compress = true,
-        Password = "MySecretPassword123",
-        CompressionLevel = "Normal"
-    },
-    Samba = new SambaSettings
-    {
-        Enabled = false,
-        SharePath = @"\\192.168.1.2\backups",
-        DeleteSourceAfterCopy = false,
-        CreateOkFile = false
-    }
+    OutputDirectory = backupSettings.OutputDirectory,
+    DefaultType = backupSettings.DefaultType,
+    Compress = backupSettings.Compress,
+    Verify = backupSettings.Verify,
+    ExcludeDatabases = backupSettings.ExcludeDatabases,
+    PostBackupCompression = compressionSettings,
+    Samba = sambaSettings
 };
 
 Console.WriteLine("MssqlBackup.Console - Backup Orchestrator");

@@ -37,12 +37,14 @@ MSSQL_BACKUP_NEW/
     └── MssqlBackup.Console/          # Aplikacja konsolowa (.NET 9 console)
         ├── MssqlBackup.Console.csproj
         ├── Program.cs
-        ├── appsettings.json           # Konfiguracja API (BaseUrl, EnvironmentName)
+        ├── appsettings.json           # Konfiguracja API, serwera, backupu, kompresji, Samba
         ├── Models/
         │   ├── BackupType.cs          # enum: Full, Differential
         │   ├── BackupOptions.cs       # Parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
-        │   ├── BackupConfiguration.cs # Konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Samba)
+        │   ├── BackupConfiguration.cs # Konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify, Samba)
+        │   ├── BackupSettings.cs      # Ustawienia backupu z appsettings.json
         │   ├── ServerConnection.cs    # Dane połączenia z serwerem SQL
+        │   ├── ServerSettings.cs      # Ustawienia serwera SQL z appsettings.json
         │   ├── BackupResult.cs        # Wynik operacji backupu
         │   ├── BackupError.cs         # Informacja o błędzie
         │   ├── ApiSettings.cs         # Ustawienia API (BaseUrl, EnvironmentName)
@@ -210,39 +212,54 @@ dotnet ef database update --project src/MssqlBackup.Api
   "ApiSettings": {
     "BaseUrl": "http://localhost:5142",
     "EnvironmentName": "Production"
+  },
+  "ServerSettings": {
+    "Server": ".\\SQLEXPRESS",
+    "Database": null,
+    "Username": null,
+    "Password": null,
+    "UseWindowsAuth": true
+  },
+  "BackupSettings": {
+    "OutputDirectory": "C:\\Backups\\MSSQL",
+    "DefaultType": "Full",
+    "Compress": true,
+    "Verify": true,
+    "ExcludeDatabases": ["master", "model", "msdb", "tempdb"]
+  },
+  "CompressionSettings": {
+    "Compress": true,
+    "Password": "",
+    "CompressionLevel": "Normal"
+  },
+  "SambaSettings": {
+    "Enabled": false,
+    "SharePath": "\\\\192.168.1.2\\backups",
+    "Username": null,
+    "Password": null,
+    "Domain": null,
+    "DeleteSourceAfterCopy": false,
+    "CreateOkFile": false
   }
 }
 ```
 
-### Console - `Program.cs` (konfiguracja BackupConfiguration)
+### Console - `Program.cs` (odczyt konfiguracji z appsettings)
 ```csharp
-var server = new ServerConnection
-{
-    Server = @".\SQLEXPRESS",
-    UseWindowsAuth = true
-};
+var apiSettings = new ApiSettings();
+configuration.GetSection("ApiSettings").Bind(apiSettings);
 
-var config = new BackupConfiguration
-{
-    OutputDirectory = @"C:\Backups\MSSQL",
-    DefaultType = BackupType.Full,
-    Compress = true,
-    Verify = true,
-    ExcludeDatabases = ["master", "model", "msdb", "tempdb"],
-    PostBackupCompression = new CompressionSettings
-    {
-        Compress = true,
-        Password = "MySecretPassword123",
-        CompressionLevel = "Normal"
-    },
-    Samba = new SambaSettings
-    {
-        Enabled = false,
-        SharePath = @"\\192.168.1.2\backups",
-        DeleteSourceAfterCopy = false,
-        CreateOkFile = false
-    }
-};
+var serverSettings = new ServerSettings();
+configuration.GetSection("ServerSettings").Bind(serverSettings);
+
+var backupSettings = new BackupSettings();
+configuration.GetSection("BackupSettings").Bind(backupSettings);
+
+var compressionSettings = new CompressionSettings();
+configuration.GetSection("CompressionSettings").Bind(compressionSettings);
+
+var sambaSettings = new SambaSettings();
+configuration.GetSection("SambaSettings").Bind(sambaSettings);
 ```
 
 ## Docker
