@@ -105,6 +105,7 @@ MSSQL_BACKUP_NEW/
 | MssqlBackup.Shared | — | — |
 | MssqlBackup.Console | MssqlBackup.Shared | Microsoft.Extensions.Configuration, Microsoft.Extensions.Configuration.Json, Microsoft.Extensions.DependencyInjection, Microsoft.Extensions.Logging.Console, Microsoft.Extensions.Http, Microsoft.Data.SqlClient |
 | MssqlBackup.Api | MssqlBackup.Shared | Microsoft.EntityFrameworkCore, Microsoft.EntityFrameworkCore.Sqlite, Microsoft.EntityFrameworkCore.Design, Scalar.AspNetCore, Microsoft.AspNetCore.SignalR |
+| MssqlBackup.Web | MssqlBackup.Shared | Microsoft.AspNetCore.SignalR.Client |
 
 ## Console App Architecture
 
@@ -319,6 +320,7 @@ docker compose logs api
 
 ### Endpoints po uruchomieniu
 - API: `http://<VPS_IP>:8283`
+- Web UI: `http://<VPS_IP>:8284`
 - Scalar API Docs: `http://<VPS_IP>:8283/scalar/v1` (w trybie Development)
 
 ### Zarządzanie
