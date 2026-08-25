@@ -162,38 +162,46 @@ else
 
     private async Task SetupSignalR()
     {
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
-            .WithAutomaticReconnect()
-            .Build();
-
-        _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
+        try
         {
-            _recentRecords.Insert(0, record);
-            if (_recentRecords.Count > 5)
-                _recentRecords.RemoveAt(5);
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
+                .WithAutomaticReconnect()
+                .Build();
 
-            _lastBackup = record;
-            _todayCount++;
-            _totalCount++;
+            _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
+            {
+                _recentRecords.Insert(0, record);
+                if (_recentRecords.Count > 5)
+                    _recentRecords.RemoveAt(5);
 
-            await InvokeAsync(StateHasChanged);
-        });
+                _lastBackup = record;
+                _todayCount++;
+                _totalCount++;
 
-        _hubConnection.Reconnecting += _ =>
-        {
-            _isConnected = false;
-            return InvokeAsync(StateHasChanged);
-        };
+                await InvokeAsync(StateHasChanged);
+            });
 
-        _hubConnection.Reconnected += _ =>
-        {
+            _hubConnection.Reconnecting += _ =>
+            {
+                _isConnected = false;
+                return InvokeAsync(StateHasChanged);
+            };
+
+            _hubConnection.Reconnected += _ =>
+            {
+                _isConnected = true;
+                return InvokeAsync(StateHasChanged);
+            };
+
+            await _hubConnection.StartAsync();
             _isConnected = true;
-            return InvokeAsync(StateHasChanged);
-        };
-
-        await _hubConnection.StartAsync();
-        _isConnected = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
+            _isConnected = false;
+        }
     }
 
     private static string FormatSize(long bytes)

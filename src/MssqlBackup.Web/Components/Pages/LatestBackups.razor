@@ -139,41 +139,49 @@ else
 
     private async Task SetupSignalR()
     {
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
-            .WithAutomaticReconnect()
-            .Build();
-
-        _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
+        try
         {
-            var existing = _latestRecords.FirstOrDefault(r => r.DatabaseName == record.DatabaseName && r.InstanceName == record.InstanceName);
-            if (existing != null)
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
             {
-                var index = _latestRecords.IndexOf(existing);
-                _latestRecords[index] = record;
-            }
-            else
+                var existing = _latestRecords.FirstOrDefault(r => r.DatabaseName == record.DatabaseName && r.InstanceName == record.InstanceName);
+                if (existing != null)
+                {
+                    var index = _latestRecords.IndexOf(existing);
+                    _latestRecords[index] = record;
+                }
+                else
+                {
+                    _latestRecords.Add(record);
+                }
+                _latestRecords = _latestRecords.OrderByDescending(r => r.BackupDate).ToList();
+                await InvokeAsync(StateHasChanged);
+            });
+
+            _hubConnection.Reconnecting += _ =>
             {
-                _latestRecords.Add(record);
-            }
-            _latestRecords = _latestRecords.OrderByDescending(r => r.BackupDate).ToList();
-            await InvokeAsync(StateHasChanged);
-        });
+                _isConnected = false;
+                return InvokeAsync(StateHasChanged);
+            };
 
-        _hubConnection.Reconnecting += _ =>
-        {
-            _isConnected = false;
-            return InvokeAsync(StateHasChanged);
-        };
+            _hubConnection.Reconnected += _ =>
+            {
+                _isConnected = true;
+                return InvokeAsync(StateHasChanged);
+            };
 
-        _hubConnection.Reconnected += _ =>
-        {
+            await _hubConnection.StartAsync();
             _isConnected = true;
-            return InvokeAsync(StateHasChanged);
-        };
-
-        await _hubConnection.StartAsync();
-        _isConnected = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
+            _isConnected = false;
+        }
     }
 
     private static string FormatSize(long bytes)

@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.ResponseCompression;
 using MssqlBackup.Web.Hubs;
 using MssqlBackup.Web.Services;
 
@@ -6,11 +5,6 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
-
-builder.Services.AddResponseCompression(options =>
-{
-    options.EnableForHttps = true;
-});
 
 builder.Services.AddHttpClient<BackupApiService>(client =>
 {
@@ -27,7 +21,6 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
 

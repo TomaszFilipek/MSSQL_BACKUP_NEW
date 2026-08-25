@@ -281,32 +281,40 @@ else
 
     private async Task SetupSignalR()
     {
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
-            .WithAutomaticReconnect()
-            .Build();
-
-        _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
+        try
         {
-            _allRecords.Insert(0, record);
-            ApplyFilter();
-            await InvokeAsync(StateHasChanged);
-        });
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/hubs/backup"))
+                .WithAutomaticReconnect()
+                .Build();
 
-        _hubConnection.Reconnecting += _ =>
-        {
-            _isConnected = false;
-            return InvokeAsync(StateHasChanged);
-        };
+            _hubConnection.On<BackupRecordDto>("BackupCreated", async (record) =>
+            {
+                _allRecords.Insert(0, record);
+                ApplyFilter();
+                await InvokeAsync(StateHasChanged);
+            });
 
-        _hubConnection.Reconnected += _ =>
-        {
+            _hubConnection.Reconnecting += _ =>
+            {
+                _isConnected = false;
+                return InvokeAsync(StateHasChanged);
+            };
+
+            _hubConnection.Reconnected += _ =>
+            {
+                _isConnected = true;
+                return InvokeAsync(StateHasChanged);
+            };
+
+            await _hubConnection.StartAsync();
             _isConnected = true;
-            return InvokeAsync(StateHasChanged);
-        };
-
-        await _hubConnection.StartAsync();
-        _isConnected = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
+            _isConnected = false;
+        }
     }
 
     private static string FormatSize(long bytes)
