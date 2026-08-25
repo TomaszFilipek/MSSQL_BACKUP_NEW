@@ -170,6 +170,81 @@ dotnet ef migrations add <MigrationName> --project src/MssqlBackup.Api
 dotnet ef database update --project src/MssqlBackup.Api
 ```
 
+## Przykłady konfiguracji
+
+### API - `appsettings.json`
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*",
+  "ConnectionStrings": {
+    "DefaultConnection": "Data Source=MssqlBackup.db"
+  }
+}
+```
+
+### API - `appsettings.Development.json`
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning",
+      "Microsoft.EntityFrameworkCore.Database.Command": "Information"
+    }
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Data Source=MssqlBackup_Dev.db"
+  }
+}
+```
+
+### Console - `appsettings.json`
+```json
+{
+  "ApiSettings": {
+    "BaseUrl": "http://localhost:5142",
+    "EnvironmentName": "Production"
+  }
+}
+```
+
+### Console - `Program.cs` (konfiguracja BackupConfiguration)
+```csharp
+var server = new ServerConnection
+{
+    Server = @".\SQLEXPRESS",
+    UseWindowsAuth = true
+};
+
+var config = new BackupConfiguration
+{
+    OutputDirectory = @"C:\Backups\MSSQL",
+    DefaultType = BackupType.Full,
+    Compress = true,
+    Verify = true,
+    ExcludeDatabases = ["master", "model", "msdb", "tempdb"],
+    PostBackupCompression = new CompressionSettings
+    {
+        Compress = true,
+        Password = "MySecretPassword123",
+        CompressionLevel = "Normal"
+    },
+    Samba = new SambaSettings
+    {
+        Enabled = false,
+        SharePath = @"\\192.168.1.2\backups",
+        DeleteSourceAfterCopy = false,
+        CreateOkFile = false
+    }
+};
+```
+
 ## Docker
 
 ### Struktura plików Docker
