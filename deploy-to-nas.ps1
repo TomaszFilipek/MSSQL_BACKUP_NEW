@@ -1,8 +1,12 @@
 ﻿# =============================================================================
 #  deploy-to-nas.ps1
-#  Kopiuje projekt MSSQL_BACKUP_NEW na NAS (bez artefaktow build) i przebudowuje
-#  kontenery Docker
+#  Kopiuje projekt MSSQL_BACKUP_NEW na NAS i przebudowuje kontenery Docker
 # =============================================================================
+
+param(
+    [ValidateSet("api", "web", "all")]
+    [string]$Service = ""
+)
 
 $NAS_IP   = "192.168.1.2"
 $NAS_USER = "tomasz"
@@ -10,6 +14,29 @@ $NAS_PASS = "Wronski_Nas_2022"
 $NAS_ROOT = "/volume1/TOMASZ/MSSQL_BACKUP_NEW"
 
 $LOCAL_SOURCE = $PSScriptRoot
+
+# ---------------------------------------------------------------------------
+#  Menu wyboru serwisu
+# ---------------------------------------------------------------------------
+
+if (-not $Service) {
+    Write-Host ""
+    Write-Host "Co chcesz zdeploy'owac?" -ForegroundColor Cyan
+    Write-Host "  1) Tylko API   (port 8283)" -ForegroundColor Yellow
+    Write-Host "  2) Tylko Web   (port 8284)" -ForegroundColor Yellow
+    Write-Host "  3) Oba (API + Web)" -ForegroundColor Yellow
+    Write-Host ""
+    $choice = Read-Host "Wybierz (1/2/3)"
+    switch ($choice) {
+        "1" { $Service = "api" }
+        "2" { $Service = "web" }
+        "3" { $Service = "all" }
+        default { Write-Host "Nieprawidlowy wybor." -ForegroundColor Red; exit 1 }
+    }
+}
+
+Write-Host ""
+Write-Host ">>> Deploy serwisu: $Service" -ForegroundColor Cyan
 
 # ---------------------------------------------------------------------------
 #  Funkcje pomocnicze
@@ -64,13 +91,32 @@ Write-OK "plink : $plink"
 Write-OK "pscp  : $pscp"
 
 # ---------------------------------------------------------------------------
-#  Przygotuj katalog tymczasowy (czysty - bez artefaktow)
+#  Polacz z NAS
 # ---------------------------------------------------------------------------
 
-Write-Step "Przygotowuje czysta kopie projektu..."
+Write-Step "Lacze z NAS ($NAS_USER@${NAS_IP})..."
+
+& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "mkdir -p `"$NAS_ROOT`""
+if ($LASTEXITCODE -ne 0) {
+    Write-Fail "Nie mozna polaczyc sie z NAS. Sprawdz IP, login i haslo."
+    exit 1
+}
+Write-OK "Polaczenie SSH OK"
+
+# ---------------------------------------------------------------------------
+#  Kopiowanie plikow na NAS
+# ---------------------------------------------------------------------------
+
+Write-Step "Przesylam pliki na NAS..."
+
+# Zawsze kopiuj docker-compose.yml i .dockerignore (potrzebne dla obu serwisow)
+& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "docker-compose.yml") "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/docker-compose.yml"
+& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot ".dockerignore")      "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/.dockerignore"
+
+# Skopiuj src/ (wspoldzielone dla obu serwisow)
+Write-Host "    >> Kopiowanie kodu zrodlowego (src/)..." -ForegroundColor DarkGray
 
 $tempDir = Join-Path $env:TEMP "MSSQL_BACKUP_NEW_deploy"
-
 if (Test-Path $tempDir) {
     Remove-Item $tempDir -Recurse -Force
 }
@@ -80,7 +126,6 @@ $excludeDirs = @(
     ".git", ".vs", ".vscode", ".github", ".idea",
     "bin", "obj", "publish"
 )
-
 $excludeFiles = @("*.user", "*.suo", "Thumbs.db", ".DS_Store", "*.cache", "*.vsidx", "*.dtbcache.v2")
 
 $robocopyArgs = @(
@@ -101,47 +146,33 @@ if ($rc.ExitCode -ge 8) {
     exit 1
 }
 
-Write-OK "Skopiowano do: $tempDir"
+# Wyczysc src/ na NAS
+& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "rm -rf `"$NAS_ROOT/src`" && mkdir -p `"$NAS_ROOT/src`""
 
-$fileCount = (Get-ChildItem $tempDir -Recurse -File).Count
-Write-Host "    Pliki do transferu: $fileCount" -ForegroundColor DarkGray
-
-# ---------------------------------------------------------------------------
-#  Wyczysc katalog docelowy na NAS i skopiuj pliki
-# ---------------------------------------------------------------------------
-
-Write-Step "Przesylam pliki na NAS ($NAS_USER@${NAS_IP}:$NAS_ROOT)..."
-
-$sshClean = "mkdir -p `"$NAS_ROOT`""
-
-& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" $sshClean
-if ($LASTEXITCODE -ne 0) {
-    Write-Fail "Nie mozna polaczyc sie z NAS. Sprawdz IP, login i haslo."
-    exit 1
-}
-Write-OK "Polaczenie SSH OK"
-
-# Wyczysc stare pliki zrodlowe na NAS (zapobiega duplikatom i starym plikom)
-Write-Host "    >> Czyszcze katalog zrodlowy na NAS..." -ForegroundColor DarkGray
-& $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "rm -rf `"$NAS_ROOT/src`" && rm -f `"$NAS_ROOT/Dockerfile`" && rm -f `"$NAS_ROOT/Dockerfile.web`" && rm -f `"$NAS_ROOT/docker-compose.yml`" && rm -f `"$NAS_ROOT/.dockerignore`" && rm -f `"$NAS_ROOT/MSSQL_BACKUP_NEW.slnx`" && mkdir -p `"$NAS_ROOT/src`""
-
-# Skopiuj Dockerfile, docker-compose.yml, .dockerignore i plik rozwiazania
-Write-Host "    >> Kopiowanie plikow głównych..." -ForegroundColor DarkGray
-& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "Dockerfile")              "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/Dockerfile"
-& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "Dockerfile.web")          "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/Dockerfile.web"
-& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "docker-compose.yml")      "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/docker-compose.yml"
-& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot ".dockerignore")           "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/.dockerignore"
-& $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "MSSQL_BACKUP_NEW.slnx")  "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/MSSQL_BACKUP_NEW.slnx"
-
-# Skopiuj kod zrodlowy (src/)
-Write-Host "    >> Kopiowanie kodu zrodlowego (src/)..." -ForegroundColor DarkGray
+# Skopiuj src/
 & $pscp -pw $NAS_PASS -r -batch "$tempDir\src\*" "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/src/"
 if ($LASTEXITCODE -ne 0) {
     Write-Fail "Blad podczas kopiowania plikow na NAS."
     exit 1
 }
 
-Write-OK "Transfer zakonczony pomyslnie"
+# Kopiuj pliki Docker na podstawie wybranego serwisu
+if ($Service -eq "api" -or $Service -eq "all") {
+    Write-Host "    >> Kopiowanie Dockerfile (API)..." -ForegroundColor DarkGray
+    & $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "Dockerfile") "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/Dockerfile"
+    & $plink -batch -pw $NAS_PASS "$NAS_USER@$NAS_IP" "rm -f `"$NAS_ROOT/Dockerfile.web`""
+}
+
+if ($Service -eq "web" -or $Service -eq "all") {
+    Write-Host "    >> Kopiowanie Dockerfile.web..." -ForegroundColor DarkGray
+    & $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "Dockerfile.web") "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/Dockerfile.web"
+}
+
+if ($Service -eq "all") {
+    & $pscp -pw $NAS_PASS -batch (Join-Path $PSScriptRoot "MSSQL_BACKUP_NEW.slnx") "${NAS_USER}@${NAS_IP}:${NAS_ROOT}/MSSQL_BACKUP_NEW.slnx"
+}
+
+Write-OK "Transfer zakonczony"
 
 # ---------------------------------------------------------------------------
 #  Przebuduj kontenery Docker na NAS
@@ -149,7 +180,12 @@ Write-OK "Transfer zakonczony pomyslnie"
 
 Write-Step "Przebudowuje kontenery Docker na NAS..."
 
-# Generujemy skrypt bash lokalnie i kopiujemy na NAS — zero problemow z quoting
+$deployServices = switch ($Service) {
+    "api" { "api" }
+    "web" { "web" }
+    "all" { "api web" }
+}
+
 $deployScript = @"
 #!/bin/bash
 set -e
@@ -157,17 +193,17 @@ export PATH=/usr/local/bin:/usr/bin:/bin:`$PATH
 
 COMPOSE_FILE="$NAS_ROOT/docker-compose.yml"
 
-echo ">>> Zatrzymywanie kontenerow..."
-docker-compose -f "`$COMPOSE_FILE" down --remove-orphans
+echo ">>> Zatrzymywanie serwisow: $deployServices..."
+docker-compose -f "`$COMPOSE_FILE" stop $deployServices
 
 echo ">>> Budowanie obrazow (bez cache)..."
-docker-compose -f "`$COMPOSE_FILE" build --no-cache
+docker-compose -f "`$COMPOSE_FILE" build --no-cache $deployServices
 
-echo ">>> Uruchamianie kontenerow..."
-docker-compose -f "`$COMPOSE_FILE" up -d
+echo ">>> Uruchamianie serwisow..."
+docker-compose -f "`$COMPOSE_FILE" up -d $deployServices
 
-echo ">>> Status kontenerow:"
-docker-compose -f "`$COMPOSE_FILE" ps
+echo ">>> Status:"
+docker-compose -f "`$COMPOSE_FILE" ps $deployServices
 "@
 
 $deployScriptLocal = Join-Path $env:TEMP "MSSQL_BACKUP_NEW_deploy.sh"
@@ -197,5 +233,12 @@ Remove-Item $tempDir -Recurse -Force
 Write-OK "Gotowe!"
 
 Write-Host ""
-Write-Host "  API: http://${NAS_IP}:8283" -ForegroundColor Magenta
+switch ($Service) {
+    "api" { Write-Host "  API: http://${NAS_IP}:8283" -ForegroundColor Magenta }
+    "web" { Write-Host "  Web: http://${NAS_IP}:8284" -ForegroundColor Magenta }
+    "all" {
+        Write-Host "  API: http://${NAS_IP}:8283" -ForegroundColor Magenta
+        Write-Host "  Web: http://${NAS_IP}:8284" -ForegroundColor Magenta
+    }
+}
 Write-Host ""
