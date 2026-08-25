@@ -25,10 +25,7 @@ var app = builder.Build();
 
 app.UseForwardedHeaders();
 
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/Error");
-}
+app.UseExceptionHandler("/Error");
 
 app.UseStaticFiles();
 app.UseAntiforgery();
