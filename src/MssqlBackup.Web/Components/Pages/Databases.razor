@@ -1,0 +1,238 @@
+@page "/databases"
+@using MssqlBackup.Web.Models
+@using MssqlBackup.Web.Services
+@inject DatabaseCatalogService Catalog
+
+<PageTitle>MSSQL Backup - Katalog Baz</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3 class="mb-0">Katalog baz danych</h3>
+    <button class="btn btn-sm btn-outline-secondary" @onclick="LoadData">Odśwież</button>
+</div>
+
+@if (_loading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Ładowanie...</span></div>
+    </div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-md-2">
+            <div class="card card-stat primary"><div class="card-body"><h6 class="card-subtitle mb-2 text-muted">Wszystkich baz</h6><h2 class="card-title mb-0">@_all.Count</h2></div></div>
+        </div>
+        <div class="col-md-2">
+            <div class="card card-stat success"><div class="card-body"><h6 class="card-subtitle mb-2 text-muted">Z backupem</h6><h2 class="card-title mb-0">@_withBackup</h2></div></div>
+        </div>
+        <div class="col-md-2">
+            <div class="card card-stat warning"><div class="card-body"><h6 class="card-subtitle mb-2 text-muted">Nigdy</h6><h2 class="card-title mb-0">@_neverCount</h2></div></div>
+        </div>
+        <div class="col-md-2">
+            <div class="card card-stat info"><div class="card-body"><h6 class="card-subtitle mb-2 text-muted">Przeterminowane (&gt;48h)</h6><h2 class="card-title mb-0">@_overdue</h2></div></div>
+        </div>
+        <div class="col-md-2">
+            <div class="card card-stat" style="border-left: 4px solid #6c757d;"><div class="card-body"><h6 class="card-subtitle mb-2 text-muted">Nieaktywne</h6><h2 class="card-title mb-0">@_inactive</h2></div></div>
+        </div>
+    </div>
+
+    <div class="filter-bar">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-2">
+                <label class="form-label small">Środowisko</label>
+                <select class="form-select form-select-sm" @bind="_filter.Environment" @bind:after="ApplyFilter">
+                    <option value="">Wszystkie</option>
+                    @foreach (var env in _environments)
+                    {
+                        <option value="@env">@env</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small">Serwer (Name)</label>
+                <select class="form-select form-select-sm" @bind="_filter.Server" @bind:after="ApplyFilter">
+                    <option value="">Wszystkie</option>
+                    @foreach (var s in _servers)
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small">Instancja</label>
+                <select class="form-select form-select-sm" @bind="_filter.Instance" @bind:after="ApplyFilter">
+                    <option value="">Wszystkie</option>
+                    @foreach (var inst in _instances)
+                    {
+                        <option value="@inst">@inst</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small">Baza</label>
+                <input type="text" class="form-control form-control-sm" placeholder="Szukaj..." @bind="_filter.Database" @bind:after="ApplyFilter" />
+            </div>
+            <div class="col-md-1">
+                <label class="form-label small">Aktywne</label>
+                <select class="form-select form-select-sm" @bind="_filter.Active" @bind:after="ApplyFilter">
+                    <option value="">Wszystkie</option>
+                    <option value="true">Tak</option>
+                    <option value="false">Nie</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-sm btn-outline-secondary w-100" @onclick="ResetFilter">Wyczyść</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="table-container">
+        <table class="table table-hover mb-0 small">
+            <thead class="table-light">
+                <tr>
+                    <th @onclick="() => SortBy(nameof(DatabaseCatalogDto.EnvironmentName))" style="cursor:pointer">Środ. @GetSortIcon(nameof(DatabaseCatalogDto.EnvironmentName))</th>
+                    <th @onclick="() => SortBy(nameof(DatabaseCatalogDto.ServerName))" style="cursor:pointer">Serwer @GetSortIcon(nameof(DatabaseCatalogDto.ServerName))</th>
+                    <th @onclick="() => SortBy(nameof(DatabaseCatalogDto.InstanceName))" style="cursor:pointer">Instancja @GetSortIcon(nameof(DatabaseCatalogDto.InstanceName))</th>
+                    <th @onclick="() => SortBy(nameof(DatabaseCatalogDto.DatabaseName))" style="cursor:pointer">Baza @GetSortIcon(nameof(DatabaseCatalogDto.DatabaseName))</th>
+                    <th @onclick="() => SortBy(nameof(DatabaseCatalogDto.LastBackupDate))" style="cursor:pointer">Ostatni backup @GetSortIcon(nameof(DatabaseCatalogDto.LastBackupDate))</th>
+                    <th>Wiek</th>
+                    <th>Rozmiar</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _paged)
+                {
+                    var lastWarsaw = row.LastBackupDate.HasValue ? TimeHelper.ToWarsawTime(row.LastBackupDate.Value) : (DateTime?)null;
+                    var age = lastWarsaw.HasValue ? TimeHelper.ToWarsawTime(DateTime.UtcNow) - lastWarsaw.Value : (TimeSpan?)null;
+                    var ageText = !lastWarsaw.HasValue ? "nigdy" : age!.Value.TotalHours < 1 ? $"{age.Value.Minutes}m" : age.Value.TotalHours < 24 ? $"{age.Value.TotalHours:F0}h" : $"{age.Value.TotalDays:F0}d";
+                    var ageClass = !lastWarsaw.HasValue ? "age-red" : age!.Value.TotalHours < 24 ? "age-green" : age!.Value.TotalHours < 48 ? "age-yellow" : "age-red";
+                    var statusBadge = !row.IsActive ? "bg-secondary" : !lastWarsaw.HasValue ? "bg-danger" : age!.Value.TotalHours > 48 ? "bg-danger" : age!.Value.TotalHours > 24 ? "bg-warning text-dark" : "bg-success";
+                    var statusText = !row.IsActive ? "Nieaktywna" : !lastWarsaw.HasValue ? "Brak" : age!.Value.TotalHours > 48 ? "Przeterminowany" : age!.Value.TotalHours > 24 ? "Ostrzeżenie" : "OK";
+                    <tr class="@(!row.IsActive ? "table-secondary" : "")">
+                        <td><span class="badge bg-info">@row.EnvironmentName</span></td>
+                        <td><span class="badge bg-dark" title="@row.InstanceName">@row.ServerName</span></td>
+                        <td class="text-muted" title="@row.InstanceName">@row.InstanceName</td>
+                        <td><strong>@row.DatabaseName</strong></td>
+                        <td class="text-nowrap">@(lastWarsaw?.ToString("dd.MM.yyyy HH:mm:ss") ?? "-")</td>
+                        <td><span class="@ageClass fw-bold">@ageText</span></td>
+                        <td>@(row.LastFileSize.HasValue ? FormatSize(row.LastFileSize.Value) : "-")</td>
+                        <td><span class="badge @statusBadge">@statusText</span></td>
+                    </tr>
+                }
+                @if (!_paged.Any())
+                {
+                    <tr><td colspan="8" class="text-center text-muted py-3">Brak baz</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mt-3">
+        <small class="text-muted">Wyświetlanie @((_currentPage - 1) * _pageSize + 1)-@(Math.Min(_currentPage * _pageSize, _filtered.Count)) z @_filtered.Count</small>
+        <nav>
+            <ul class="pagination pagination-sm mb-0">
+                <li class="page-item @(_currentPage == 1 ? "disabled" : "")"><button class="page-link" @onclick="() => ChangePage(_currentPage - 1)">Poprzednia</button></li>
+                @for (var i = 1; i <= _totalPages; i++)
+                {
+                    var p = i;
+                    <li class="page-item @(p == _currentPage ? "active" : "")"><button class="page-link" @onclick="() => ChangePage(p)">@p</button></li>
+                }
+                <li class="page-item @(_currentPage == _totalPages ? "disabled" : "")"><button class="page-link" @onclick="() => ChangePage(_currentPage + 1)">Następna</button></li>
+            </ul>
+        </nav>
+    </div>
+}
+
+@code {
+    private List<DatabaseCatalogDto> _all = [];
+    private List<DatabaseCatalogDto> _filtered = [];
+    private List<DatabaseCatalogDto> _paged = [];
+    private List<string> _environments = [];
+    private List<string> _servers = [];
+    private List<string> _instances = [];
+    private FilterModel _filter = new();
+    private bool _loading = true;
+    private string _sortColumn = nameof(DatabaseCatalogDto.DatabaseName);
+    private bool _sortDesc;
+    private int _currentPage = 1;
+    private int _pageSize = 50;
+    private int _totalPages => (int)Math.Ceiling((double)_filtered.Count / _pageSize);
+    private int _withBackup, _neverCount, _overdue, _inactive;
+
+    private class FilterModel
+    {
+        public string? Environment { get; set; }
+        public string? Server { get; set; }
+        public string? Instance { get; set; }
+        public string? Database { get; set; }
+        public string? Active { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        _loading = true;
+        _all = await Catalog.GetDatabasesAsync(null, null, false, 1000);
+        _environments = _all.Select(r => r.EnvironmentName).Distinct().OrderBy(e => e).ToList();
+        _servers = _all.Select(r => r.ServerName).Distinct().OrderBy(e => e).ToList();
+        _instances = _all.Select(r => r.InstanceName).Distinct().OrderBy(e => e).ToList();
+        _withBackup = _all.Count(r => r.LastBackupDate != null);
+        _neverCount = _all.Count(r => r.LastBackupDate == null && r.IsActive);
+        _overdue = _all.Count(r => r.LastBackupDate != null && (TimeHelper.ToWarsawTime(DateTime.UtcNow) - TimeHelper.ToWarsawTime(r.LastBackupDate.Value)).TotalHours > 48);
+        _inactive = _all.Count(r => !r.IsActive);
+        ApplyFilter();
+        _loading = false;
+    }
+
+    private void ApplyFilter()
+    {
+        var q = _all.AsEnumerable();
+        if (!string.IsNullOrEmpty(_filter.Environment)) q = q.Where(r => r.EnvironmentName == _filter.Environment);
+        if (!string.IsNullOrEmpty(_filter.Server)) q = q.Where(r => r.ServerName == _filter.Server);
+        if (!string.IsNullOrEmpty(_filter.Instance)) q = q.Where(r => r.InstanceName == _filter.Instance);
+        if (!string.IsNullOrEmpty(_filter.Database)) q = q.Where(r => r.DatabaseName.Contains(_filter.Database, StringComparison.OrdinalIgnoreCase));
+        if (_filter.Active == "true") q = q.Where(r => r.IsActive);
+        if (_filter.Active == "false") q = q.Where(r => !r.IsActive);
+        _filtered = q.ToList();
+        ApplySorting();
+        _currentPage = 1;
+        UpdatePaged();
+    }
+
+    private void ApplySorting()
+    {
+        _filtered = _sortColumn switch
+        {
+            nameof(DatabaseCatalogDto.DatabaseName) => _sortDesc ? _filtered.OrderByDescending(r => r.DatabaseName).ToList() : _filtered.OrderBy(r => r.DatabaseName).ToList(),
+            nameof(DatabaseCatalogDto.EnvironmentName) => _sortDesc ? _filtered.OrderByDescending(r => r.EnvironmentName).ToList() : _filtered.OrderBy(r => r.EnvironmentName).ToList(),
+            nameof(DatabaseCatalogDto.ServerName) => _sortDesc ? _filtered.OrderByDescending(r => r.ServerName).ToList() : _filtered.OrderBy(r => r.ServerName).ToList(),
+            nameof(DatabaseCatalogDto.InstanceName) => _sortDesc ? _filtered.OrderByDescending(r => r.InstanceName).ToList() : _filtered.OrderBy(r => r.InstanceName).ToList(),
+            nameof(DatabaseCatalogDto.LastBackupDate) => _sortDesc ? _filtered.OrderByDescending(r => r.LastBackupDate).ToList() : _filtered.OrderBy(r => r.LastBackupDate).ToList(),
+            _ => _filtered
+        };
+    }
+
+    private void SortBy(string col)
+    {
+        if (_sortColumn == col) _sortDesc = !_sortDesc;
+        else { _sortColumn = col; _sortDesc = false; }
+        ApplySorting();
+        UpdatePaged();
+    }
+
+    private string GetSortIcon(string col) => _sortColumn != col ? "" : _sortDesc ? "↓" : "↑";
+
+    private void UpdatePaged() => _paged = _filtered.Skip((_currentPage - 1) * _pageSize).Take(_pageSize).ToList();
+    private void ChangePage(int p) { if (p < 1 || p > _totalPages) return; _currentPage = p; UpdatePaged(); }
+    private void ResetFilter() { _filter = new(); ApplyFilter(); }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+}

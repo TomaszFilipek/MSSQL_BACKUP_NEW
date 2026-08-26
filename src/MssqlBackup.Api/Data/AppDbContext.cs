@@ -12,6 +12,7 @@ public class AppDbContext : DbContext
 
     public DbSet<BackupRecord> BackupRecords { get; set; } = null!;
     public DbSet<BackupJob> BackupJobs { get; set; } = null!;
+    public DbSet<RegisteredDatabase> RegisteredDatabases { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,6 +46,20 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.UpdatedAt);
             entity.HasIndex(e => new { e.EnvironmentName, e.InstanceName });
+        });
+
+        modelBuilder.Entity<RegisteredDatabase>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.EnvironmentName).HasMaxLength(100);
+            entity.Property(e => e.InstanceName).HasMaxLength(200);
+            entity.Property(e => e.ServerName).HasMaxLength(200);
+            entity.Property(e => e.DatabaseName).HasMaxLength(200);
+            entity.Property(e => e.DatabaseKey).HasMaxLength(600);
+            entity.HasIndex(e => e.DatabaseKey).IsUnique();
+            entity.HasIndex(e => new { e.EnvironmentName, e.InstanceName });
+            entity.HasIndex(e => e.IsActive);
+            entity.HasIndex(e => e.LastSeenAt);
         });
     }
 }

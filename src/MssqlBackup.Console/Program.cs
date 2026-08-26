@@ -106,11 +106,37 @@ try
     if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?"))
     {
         Console.WriteLine("MssqlBackup.Console - uzycie:");
-        Console.WriteLine("  MssqlBackup.Console [--server <Name>]");
+        Console.WriteLine("  MssqlBackup.Console [--server <Name>] [--sync-databases [server]]");
+        Console.WriteLine("  --sync-databases | --catalog : wysyla liste baz do API (drugi param = nazwa serwera, jesli brak to wszystkie)");
         Console.WriteLine("  Dostepne serwery:");
         foreach (var s in servers!)
             Console.WriteLine($"    - {s.Name}: {s.Server} {(s.UseWindowsAuth ? "(WindowsAuth)" : $"User={s.Username}")}");
         return;
+    }
+
+    var isSync = args.Any(a => a.Equals("--sync-databases", StringComparison.OrdinalIgnoreCase) ||
+                               a.Equals("--sync-catalog", StringComparison.OrdinalIgnoreCase) ||
+                               a.Equals("--catalog", StringComparison.OrdinalIgnoreCase) ||
+                               a.Equals("--list-databases", StringComparison.OrdinalIgnoreCase));
+
+    // Obsluga drugiego parametru pozycyjnego dla sync: --sync-databases PROD-01
+    if (isSync && string.IsNullOrWhiteSpace(requestedServer))
+    {
+        var syncIdx = Array.FindIndex(args, a => a.Equals("--sync-databases", StringComparison.OrdinalIgnoreCase) ||
+                                                 a.Equals("--sync-catalog", StringComparison.OrdinalIgnoreCase) ||
+                                                 a.Equals("--catalog", StringComparison.OrdinalIgnoreCase) ||
+                                                 a.Equals("--list-databases", StringComparison.OrdinalIgnoreCase));
+        if (syncIdx >= 0 && syncIdx + 1 < args.Length && !args[syncIdx + 1].StartsWith("-"))
+        {
+            var positional = args[syncIdx + 1];
+            var match = servers!.FirstOrDefault(s => s.Name.Equals(positional, StringComparison.OrdinalIgnoreCase) ||
+                                                     s.Server.Equals(positional, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+            {
+                servers = [match];
+                requestedServer = positional;
+            }
+        }
     }
 
     var services = new ServiceCollection();
@@ -122,12 +148,44 @@ try
     });
     services.AddHttpClient<BackupApiClient>(client => { client.BaseAddress = new Uri(apiSettings.BaseUrl); });
     services.AddHttpClient<BackupJobApiClient>(client => { client.BaseAddress = new Uri(apiSettings.BaseUrl); });
+    services.AddHttpClient<DatabaseCatalogApiClient>(client => { client.BaseAddress = new Uri(apiSettings.BaseUrl); });
     services.AddTransient<BackupService>();
     services.AddTransient<CompressionService>();
     services.AddTransient<SambaService>();
     services.AddTransient<BackupOrchestrator>();
 
     var serviceProvider = services.BuildServiceProvider();
+
+    if (isSync)
+    {
+        var backupService = serviceProvider.GetRequiredService<BackupService>();
+        var catalogClient = serviceProvider.GetRequiredService<DatabaseCatalogApiClient>();
+        Console.WriteLine($"=== SYNC DATABASES TO API ({servers!.Count} serwerow) ===");
+        Console.WriteLine($"Environment: {apiSettings.EnvironmentName}");
+        Console.WriteLine();
+        foreach (var srv in servers!)
+        {
+            var conn = srv.ToConnection();
+            Console.WriteLine($"-- {srv.Name} ({conn.Server}) --");
+            try
+            {
+                var dbs = await backupService.GetDatabasesAsync(conn);
+                // apply exclude filter so catalog reflects what would be backed up
+                var toSync = BackupOrchestrator.FilterDatabases(dbs, backupSettings.ExcludeDatabases);
+                Console.WriteLine($"   Znaleziono {dbs.Count} baz, po filtrowaniu: {toSync.Count}");
+                await catalogClient.SyncAsync(apiSettings.EnvironmentName, conn.Server, srv.Name, toSync);
+                Console.WriteLine($"   Zsynchronizowano {toSync.Count} baz");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   Blad: {ex.Message}");
+                Log.Error(ex, "Sync failed for {Server}", srv.Name);
+            }
+        }
+        Console.WriteLine("Sync zakonczony.");
+        return;
+    }
+
     var orchestrator = serviceProvider.GetRequiredService<BackupOrchestrator>();
 
     var config = new BackupConfiguration
