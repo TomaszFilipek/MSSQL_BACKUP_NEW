@@ -32,7 +32,8 @@ MSSQL_BACKUP_NEW/
     │   ├── Program.cs
     │   ├── Controllers/
     │   │   ├── BackupRecordsController.cs  # CRUD + SignalR broadcast
-    │   │   └── BackupJobsController.cs     # CRUD dla live status konsoli
+    │   │   ├── BackupJobsController.cs     # CRUD dla live status konsoli
+    │   │   └── DatabasesController.cs      # sync + katalog baz (RegisteredDatabase)
     │   ├── Hubs/
     │   │   └── BackupHub.cs          # SignalR hub (BackupCreated + JobUpdated)
     │   ├── Data/
@@ -40,18 +41,21 @@ MSSQL_BACKUP_NEW/
     │   │   └── Migrations/           # Migracje EF Core
     │   ├── Models/
     │   │   ├── BackupRecord.cs       # Encja historii backupów
-    │   │   └── BackupJob.cs          # Encja live statusu konsoli
+    │   │   ├── BackupJob.cs          # Encja live statusu konsoli
+    │   │   └── RegisteredDatabase.cs # Encja katalogu baz (DatabaseKey = ENV|Instance|DB)
     │   ├── appsettings.json
     │   └── appsettings.Development.json
     ├── MssqlBackup.Web/             # Blazor Server UI (.NET 9)
     │   ├── MssqlBackup.Web.csproj
     │   ├── Program.cs
     │   ├── Services/
-    │   │   ├── BackupApiService.cs   # Klient HTTP do API (backuprecords)
-    │   │   └── BackupJobService.cs   # Klient HTTP do API (backupjobs)
+    │   │   ├── BackupApiService.cs         # Klient HTTP do API (backuprecords)
+    │   │   ├── BackupJobService.cs         # Klient HTTP do API (backupjobs)
+    │   │   └── DatabaseCatalogService.cs   # Klient HTTP do API (databases)
     │   ├── Models/
-    │   │   ├── BackupRecordDto.cs    # DTO + BackupFilter
-    │   │   └── BackupJobDto.cs       # DTO dla live statusu
+    │   │   ├── BackupRecordDto.cs          # DTO + BackupFilter
+    │   │   ├── BackupJobDto.cs             # DTO dla live statusu
+    │   │   └── DatabaseCatalogDto.cs       # DTO katalogu baz (z ostatnim backupem)
     │   ├── Helpers/
     │   │   └── TimeHelper.cs         # Konwersja UTC -> Europe/Warsaw
     │   ├── Hubs/
@@ -67,35 +71,40 @@ MSSQL_BACKUP_NEW/
     │   │       ├── Backups.razor     # Historia z filtrami
     │   │       ├── LatestBackups.razor # Ostatnie backupy
     │   │       ├── Jobs.razor        # Live status konsoli (aktywne + historia)
+    │   │       ├── Databases.razor   # Katalog baz (ostatni backup, sort, filtry, wiek)
     │   │       └── Test.razor        # Strona diagnostyczna
     │   ├── wwwroot/css/app.css
     │   └── appsettings.json
     └── MssqlBackup.Console/          # Aplikacja konsolowa (.NET 9 console)
         ├── MssqlBackup.Console.csproj
-        ├── Program.cs                # Serilog file logging 14d rotation
-        ├── appsettings.json           # Konfiguracja API, serwera, backupu, kompresji, Samba
+        ├── Program.cs                # Serilog file logging 14d rotation + --server/--type/--sync-databases
+        ├── appsettings.json           # Konfiguracja API, serwera, backupu, kompresji, Samba, LocalCopy
         ├── appsettings.Local.json     # Local overrides (gitignored)
         ├── Models/
-        │   ├── BackupType.cs
+        │   ├── BackupType.cs         # Full, Differential
         │   ├── BackupOptions.cs
-        │   ├── BackupConfiguration.cs
+        │   ├── BackupConfiguration.cs  # + LocalCopy
         │   ├── BackupSettings.cs
         │   ├── ServerConnection.cs
         │   ├── ServerSettings.cs
+        │   ├── NamedServerSettings.cs
         │   ├── BackupResult.cs
         │   ├── BackupError.cs
         │   ├── ApiSettings.cs
         │   ├── BackupRecordDto.cs
         │   ├── BackupJobDto.cs       # DTO live statusu
         │   ├── CompressionSettings.cs # + DeleteSourceAfterCompress
-        │   └── SambaSettings.cs
+        │   ├── SambaSettings.cs
+        │   └── LocalCopySettings.cs
         └── Services/
             ├── BackupService.cs
-            ├── BackupOrchestrator.cs  # Raportuje progress do API (BackupJob)
+            ├── BackupOrchestrator.cs  # Raportuje progress do API (BackupJob), folder _Full/_Diff, kopiowanie na koncu
             ├── BackupApiClient.cs
             ├── BackupJobApiClient.cs  # Klient HTTP dla BackupJobs
+            ├── DatabaseCatalogApiClient.cs
             ├── CompressionService.cs
-            └── SambaService.cs
+            ├── SambaService.cs
+            └── LocalCopyService.cs
 ```
 
 ## Key Technical Decisions
@@ -121,18 +130,21 @@ MSSQL_BACKUP_NEW/
 
 ### Kluczowe klasy
 - **BackupService** - wykonuje backupy pojedynczych baz (BACKUP DATABASE)
-- **BackupOrchestrator** - orchestruje backup wszystkich baz + raportuje live status do API (BackupJob)
+- **BackupOrchestrator** - orchestruje backup wszystkich baz + raportuje live status do API (BackupJob), kolejność: backup -> kompresja -> Samba/LocalCopy na końcu, folder `yyyy-MM-dd HH-mm-ss_Full/_Diff`
 - **BackupApiClient** - klient HTTP do wysyłania rekordów do REST API
 - **BackupJobApiClient** - klient HTTP do raportowania live statusu (BackupJob: Running/Completed)
+- **DatabaseCatalogApiClient** - wysyłka listy baz do API (`POST /api/databases/sync`)
 - **CompressionService** - kompresja plików 7-Zip (z obsługą hasła + DeleteSourceAfterCompress)
 - **SambaService** - wysyłka backupów na udziały sieciowe Samba
+- **LocalCopyService** - kopia backupu/archiwum do folderu lokalnego (inny dysk)
 - **ServerConnection** - dane połączenia (Server, Username, Password, UseWindowsAuth)
-- **BackupConfiguration** - konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify)
+- **BackupConfiguration** - konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify, Samba, LocalCopy)
 - **BackupOptions** - parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
 - **BackupResult** - wynik operacji (TotalDatabases, SuccessfulBackups, FailedBackups, Errors)
 - **ApiSettings** - ustawienia API (BaseUrl, EnvironmentName)
 - **CompressionSettings** - ustawienia kompresji (Compress, Password, CompressionLevel, DeleteSourceAfterCompress)
 - **SambaSettings** - ustawienia Samba (Enabled, SharePath, DeleteSourceAfterCopy, CreateOkFile)
+- **LocalCopySettings** - kopiowanie lokalne (Enabled, DestinationPath, DeleteSourceAfterCopy)
 
 ### Przykład użycia
 ```csharp
@@ -159,6 +171,12 @@ var config = new BackupConfiguration
         SharePath = @"\\192.168.1.2\backups",
         DeleteSourceAfterCopy = true,
         CreateOkFile = true
+    },
+    LocalCopy = new LocalCopySettings
+    {
+        Enabled = true,
+        DestinationPath = @"D:\BackupsMirror\MSSQL",
+        DeleteSourceAfterCopy = false
     }
 };
 
@@ -220,12 +238,23 @@ dotnet run --project src/MssqlBackup.Api
 
 ### Run Console
 ```bash
-# Wszystkie skonfigurowane serwery
+# Wszystkie skonfigurowane serwery (typ z configu: BackupSettings:DefaultType)
 dotnet run --project src/MssqlBackup.Console
+
+# Typ backupu dla calej operacji (Full/Diff, wspolny dla wszystkich baz/serwerow)
+dotnet run --project src/MssqlBackup.Console -- --type Full
+dotnet run --project src/MssqlBackup.Console -- --type Diff
 
 # Konkretny serwer (Name lub Server)
 dotnet run --project src/MssqlBackup.Console -- --server PROD-01
 dotnet run --project src/MssqlBackup.Console -- --server ".\SQLEXPRESS"
+
+# Kombinacja: serwer + typ
+dotnet run --project src/MssqlBackup.Console -- --server PROD-01 --type Differential
+
+# Sync katalogu baz (bez backupu) - wszystkie lub wskazany serwer
+dotnet run --project src/MssqlBackup.Console -- --sync-databases
+dotnet run --project src/MssqlBackup.Console -- --sync-databases PROD-01
 ```
 
 ### EF Core Migrations
@@ -309,6 +338,11 @@ dotnet ef database update --project src/MssqlBackup.Api
     "Domain": null,
     "DeleteSourceAfterCopy": false,
     "CreateOkFile": false
+  },
+  "LocalCopySettings": {
+    "Enabled": false,
+    "DestinationPath": "D:\\BackupsMirror\\MSSQL",
+    "DeleteSourceAfterCopy": false
   }
 }
 ```
@@ -338,6 +372,9 @@ configuration.GetSection("CompressionSettings").Bind(compressionSettings);
 
 var sambaSettings = new SambaSettings();
 configuration.GetSection("SambaSettings").Bind(sambaSettings);
+
+var localCopySettings = new LocalCopySettings();
+configuration.GetSection("LocalCopySettings").Bind(localCopySettings);
 ```
 
 ## Docker
@@ -389,7 +426,8 @@ docker compose logs -f api
 - Migracje EF Core znajdują się w projekcie API (Data/Migrations/)
 - Połączenie z bazą danych jest konfigurowane przez appsettings.json
 - BackupOrchestrator pomija domyślnie bazy systemowe (master, model, msdb, tempdb)
-- Pliki backupów są zapisywane w `[OutputDirectory]/[EnvironmentName]/[ServerName]/[yyyy-MM-dd HH-mm-ss]/` (ta sama struktura lokalnie i na Sambie)
+- Pliki backupów są zapisywane w `[OutputDirectory]/[EnvironmentName]/[ServerName]/[yyyy-MM-dd HH-mm-ss_Full|_Diff]/` (ta sama struktura lokalnie, na Sambie i w LocalCopy); suffix `_Full`/`_Diff` zgodny z `--type` dla calej operacji
+- Kolejność: `BACKUP DATABASE` -> kompresja 7-Zip -> kopiowanie (Samba/LocalCopy na końcu, oba po kompresji); `--type` (Full/Differential) wspólny dla wszystkich baz/serwerów, domyślnie z `BackupSettings:DefaultType`
 - Błędy podczas backupu pojedynczych baz są logowane, a operacja jest kontynuowana
 - W Dockerze API nasłuchuje na porcie 5000 (HTTP)
 - SQL Server w Dockerze używa domyślnie hasła z pliku .env

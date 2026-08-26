@@ -62,6 +62,9 @@ try
     var sambaSettings = new SambaSettings();
     configuration.GetSection("SambaSettings").Bind(sambaSettings);
 
+    var localCopySettings = new LocalCopySettings();
+    configuration.GetSection("LocalCopySettings").Bind(localCopySettings);
+
     // Load servers: prefer "Servers" array, fallback to legacy "ServerSettings"
     var servers = configuration.GetSection("Servers").Get<List<NamedServerSettings>>();
     if (servers == null || servers.Count == 0)
@@ -103,11 +106,35 @@ try
         servers = filtered;
     }
 
+    // Typ backupu: --type Full|Differential (wspolny dla wszystkich baz/serwerow), domyslnie z configu
+    var typeArg = GetArg("type");
+    BackupType effectiveType = backupSettings.DefaultType;
+    if (!string.IsNullOrWhiteSpace(typeArg))
+    {
+        if (typeArg.Equals("diff", StringComparison.OrdinalIgnoreCase) ||
+            typeArg.Equals("differential", StringComparison.OrdinalIgnoreCase))
+            effectiveType = BackupType.Differential;
+        else if (typeArg.Equals("full", StringComparison.OrdinalIgnoreCase))
+            effectiveType = BackupType.Full;
+        else
+        {
+            Console.Error.WriteLine($"Nieprawidlowa wartosc --type '{typeArg}'. Dozwolone: Full, Differential (Diff).");
+            Environment.Exit(1);
+        }
+    }
+
     if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?"))
     {
         Console.WriteLine("MssqlBackup.Console - uzycie:");
-        Console.WriteLine("  MssqlBackup.Console [--server <Name>] [--sync-databases [server]]");
-        Console.WriteLine("  --sync-databases | --catalog : wysyla liste baz do API (drugi param = nazwa serwera, jesli brak to wszystkie)");
+        Console.WriteLine("  MssqlBackup.Console [--server <Name>] [--type <Full|Differential>]");
+        Console.WriteLine("  MssqlBackup.Console --sync-databases [server]");
+        Console.WriteLine("  Opcje:");
+        Console.WriteLine("    --server <Name>           Wykonaj tylko dla wskazanego serwera (Name lub Server)");
+        Console.WriteLine("    --type <Full|Diff>        Typ backupu dla calej operacji (domyslnie z BackupSettings:DefaultType)");
+        Console.WriteLine("    --sync-databases [server] Wysyla liste baz do API (drugi param = nazwa serwera, jesli brak to wszystkie)");
+        Console.WriteLine("    --catalog, --sync-catalog Alias dla --sync-databases");
+        Console.WriteLine("  Uwagi: kolejność zawsze: BACKUP -> kompresja (jesli wlaczona) -> Samba/LocalCopy (na koncu)");
+        Console.WriteLine("         Folder z datą zawiera suffix typu: yyyy-MM-dd HH-mm-ss_Full | yyyy-MM-dd HH-mm-ss_Diff");
         Console.WriteLine("  Dostepne serwery:");
         foreach (var s in servers!)
             Console.WriteLine($"    - {s.Name}: {s.Server} {(s.UseWindowsAuth ? "(WindowsAuth)" : $"User={s.Username}")}");
@@ -152,6 +179,7 @@ try
     services.AddTransient<BackupService>();
     services.AddTransient<CompressionService>();
     services.AddTransient<SambaService>();
+    services.AddTransient<LocalCopyService>();
     services.AddTransient<BackupOrchestrator>();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -191,21 +219,24 @@ try
     var config = new BackupConfiguration
     {
         OutputDirectory = backupSettings.OutputDirectory,
-        DefaultType = backupSettings.DefaultType,
+        DefaultType = effectiveType,
         Compress = backupSettings.Compress,
         Verify = backupSettings.Verify,
         SendToApi = backupSettings.SendToApi,
         ExcludeDatabases = backupSettings.ExcludeDatabases,
         PostBackupCompression = compressionSettings,
-        Samba = sambaSettings
+        Samba = sambaSettings,
+        LocalCopy = localCopySettings
     };
 
     Console.WriteLine("MssqlBackup.Console - Backup Orchestrator");
     Console.WriteLine($"Environment: {apiSettings.EnvironmentName}");
     Console.WriteLine($"API: {apiSettings.BaseUrl}");
-    Console.WriteLine($"Output: {config.OutputDirectory} / {{ENV}}/{{SERVER}}/{{yyyy-MM-dd HH-mm-ss}}");
+    Console.WriteLine($"Backup type: {config.DefaultType} {(typeArg != null ? "(z --type)" : "(z configu)")}");
+    Console.WriteLine($"Output: {config.OutputDirectory} / {{ENV}}/{{SERVER}}/{{yyyy-MM-dd HH-mm-ss}}_{(config.DefaultType == BackupType.Differential ? "Diff" : "Full")}");
     Console.WriteLine($"Post-backup compression: {config.PostBackupCompression.Compress} (delete source: {config.PostBackupCompression.DeleteSourceAfterCompress})");
     Console.WriteLine($"Samba share: {(config.Samba.Enabled ? config.Samba.SharePath : "disabled")} (same structure)");
+    Console.WriteLine($"Local copy: {(config.LocalCopy.Enabled ? config.LocalCopy.DestinationPath : "disabled")} (same structure, always after compression)");
     Console.WriteLine($"Log file: {Path.Combine(logDir, "backup-.log")} (retention 14 days)");
     Console.WriteLine($"Serwery do przetworzenia: {servers!.Count} ({string.Join(", ", servers.Select(s => s.Name))})");
     if (!string.IsNullOrWhiteSpace(requestedServer))

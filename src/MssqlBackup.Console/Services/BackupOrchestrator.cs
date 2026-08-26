@@ -11,6 +11,7 @@ public class BackupOrchestrator
     private readonly BackupJobApiClient _jobClient;
     private readonly CompressionService _compressionService;
     private readonly SambaService _sambaService;
+    private readonly LocalCopyService _localCopyService;
     private readonly ILogger<BackupOrchestrator> _logger;
 
     public BackupOrchestrator(
@@ -19,6 +20,7 @@ public class BackupOrchestrator
         BackupJobApiClient jobClient,
         CompressionService compressionService,
         SambaService sambaService,
+        LocalCopyService localCopyService,
         ILogger<BackupOrchestrator> logger)
     {
         _backupService = backupService;
@@ -26,6 +28,7 @@ public class BackupOrchestrator
         _jobClient = jobClient;
         _compressionService = compressionService;
         _sambaService = sambaService;
+        _localCopyService = localCopyService;
         _logger = logger;
     }
 
@@ -35,7 +38,8 @@ public class BackupOrchestrator
 
         var warsawZone = GetWarsawZone();
         var warsawJobTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, warsawZone);
-        var jobTimestampFolder = warsawJobTime.ToString("yyyy-MM-dd HH-mm-ss");
+        var typeSuffix = config.DefaultType == BackupType.Differential ? "Diff" : "Full";
+        var jobTimestampFolder = $"{warsawJobTime:yyyy-MM-dd HH-mm-ss}_{typeSuffix}";
 
         BackupJobDto? job = null;
         try
@@ -119,7 +123,7 @@ public class BackupOrchestrator
             try
             {
                 var safeServer = SanitizeFileName(serverName ?? server.Server);
-                var outputPath = BuildOutputPath(config.OutputDirectory, environmentName, safeServer, warsawJobTime, database);
+                var outputPath = BuildOutputPath(config.OutputDirectory, environmentName, safeServer, warsawJobTime, database, config.DefaultType);
                 var directory = Path.GetDirectoryName(outputPath);
 
                 if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -171,20 +175,91 @@ public class BackupOrchestrator
                     }
                 }
 
-                if (config.Samba.Enabled)
+                // Kopia do celow zewnetrznych - zawsze na koncu po kompresji
+                var sambaEnabled = config.Samba.Enabled;
+                var localEnabled = config.LocalCopy.Enabled && !string.IsNullOrWhiteSpace(config.LocalCopy.DestinationPath);
+                var bothCopyEnabled = sambaEnabled && localEnabled;
+
+                if (sambaEnabled || localEnabled)
                 {
-                    if (job != null)
+                    var sourceForCopy = finalFilePath;
+                    string? sambaDestPath = null;
+                    string? localDestPath = null;
+
+                    if (sambaEnabled)
                     {
-                        job.CurrentStep = "Copying to Samba";
-                        job.Message = $"Kopiowanie {database} na Samba";
-                        await _jobClient.UpdateJobAsync(job);
+                        if (job != null)
+                        {
+                            job.CurrentStep = "Copying to Samba";
+                            job.Message = $"Kopiowanie {database} na Samba";
+                            await _jobClient.UpdateJobAsync(job);
+                        }
+                        _logger.LogInformation("Copying backup '{Database}' to Samba share", database);
+                        var safeServerSamba = SanitizeFileName(serverName ?? server.Server);
+                        var sambaFolder = Path.Combine(config.Samba.SharePath, environmentName, safeServerSamba, jobTimestampFolder);
+                        sambaDestPath = Path.Combine(sambaFolder, Path.GetFileName(finalFilePath));
+                        var sambaSettingsForCopy = bothCopyEnabled
+                            ? new SambaSettings
+                            {
+                                Enabled = config.Samba.Enabled,
+                                SharePath = config.Samba.SharePath,
+                                Username = config.Samba.Username,
+                                Password = config.Samba.Password,
+                                Domain = config.Samba.Domain,
+                                DeleteSourceAfterCopy = false,
+                                CreateOkFile = config.Samba.CreateOkFile
+                            }
+                            : config.Samba;
+                        await _sambaService.CopyToShareAsync(finalFilePath, sambaDestPath, sambaSettingsForCopy);
                     }
-                    _logger.LogInformation("Copying backup '{Database}' to Samba share", database);
-                    var safeServerSamba = SanitizeFileName(serverName ?? server.Server);
-                    var sambaFolder = Path.Combine(config.Samba.SharePath, environmentName, safeServerSamba, jobTimestampFolder);
-                    var sambaDestPath = Path.Combine(sambaFolder, Path.GetFileName(finalFilePath));
-                    await _sambaService.CopyToShareAsync(finalFilePath, sambaDestPath, config.Samba);
-                    finalFilePath = sambaDestPath;
+
+                    if (localEnabled)
+                    {
+                        if (job != null)
+                        {
+                            job.CurrentStep = sambaEnabled ? "Copying to local folder" : "Copying to local folder";
+                            job.Message = $"Kopiowanie {database} do folderu lokalnego";
+                            await _jobClient.UpdateJobAsync(job);
+                        }
+                        _logger.LogInformation("Copying backup '{Database}' to local folder", database);
+                        var safeServerLocal = SanitizeFileName(serverName ?? server.Server);
+                        var localFolder = Path.Combine(config.LocalCopy.DestinationPath, environmentName, safeServerLocal, jobTimestampFolder);
+                        localDestPath = Path.Combine(localFolder, Path.GetFileName(sourceForCopy));
+                        var localSettingsForCopy = bothCopyEnabled
+                            ? new LocalCopySettings
+                            {
+                                Enabled = config.LocalCopy.Enabled,
+                                DestinationPath = config.LocalCopy.DestinationPath,
+                                DeleteSourceAfterCopy = false
+                            }
+                            : config.LocalCopy;
+                        await _localCopyService.CopyAsync(sourceForCopy, localDestPath, localSettingsForCopy);
+                    }
+
+                    if (bothCopyEnabled && (config.Samba.DeleteSourceAfterCopy || config.LocalCopy.DeleteSourceAfterCopy))
+                    {
+                        try
+                        {
+                            if (File.Exists(sourceForCopy))
+                            {
+                                File.Delete(sourceForCopy);
+                                _logger.LogInformation("Deleted source file after copies: {File}", sourceForCopy);
+                                if (config.Samba.CreateOkFile)
+                                {
+                                    var okFile = sourceForCopy + ".ok";
+                                    File.WriteAllText(okFile, $"Moved to Samba/LocalCopy: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to delete source file {File} after copies", sourceForCopy);
+                        }
+                    }
+
+                    // Rekord wskazuje na docelowa lokalizacje (preferuj Samba gdy oba)
+                    if (sambaDestPath != null) finalFilePath = sambaDestPath;
+                    else if (localDestPath != null) finalFilePath = localDestPath;
                 }
 
                 stopwatch.Stop();
@@ -277,9 +352,10 @@ public class BackupOrchestrator
         return result;
     }
 
-    public static string BuildOutputPath(string outputDirectory, string environmentName, string serverName, DateTime warsawJobTime, string databaseName)
+    public static string BuildOutputPath(string outputDirectory, string environmentName, string serverName, DateTime warsawJobTime, string databaseName, BackupType type = BackupType.Full)
     {
-        var folder = warsawJobTime.ToString("yyyy-MM-dd HH-mm-ss");
+        var suffix = type == BackupType.Differential ? "Diff" : "Full";
+        var folder = $"{warsawJobTime:yyyy-MM-dd HH-mm-ss}_{suffix}";
         var timestamp = warsawJobTime.ToString("yyyyMMdd_HHmmss");
         var fileName = $"{databaseName}_{timestamp}.bak";
         var safeServer = SanitizeFileName(serverName);
@@ -288,8 +364,8 @@ public class BackupOrchestrator
 
     public static string BuildOutputPath(string outputDirectory, string environmentName, DateTime warsawJobTime, string databaseName)
     {
-        // fallback when serverName not provided (legacy) -> treat environmentName as serverName
-        return BuildOutputPath(outputDirectory, environmentName, environmentName, warsawJobTime, databaseName);
+        // fallback when serverName not provided (legacy) -> treat environmentName as serverName, default Full
+        return BuildOutputPath(outputDirectory, environmentName, environmentName, warsawJobTime, databaseName, BackupType.Full);
     }
 
     // Backward compatible overload (for tests)
@@ -297,7 +373,7 @@ public class BackupOrchestrator
     {
         var warsawZone = GetWarsawZone();
         var warsawNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, warsawZone);
-        return BuildOutputPath(outputDirectory, instanceName, instanceName, warsawNow, databaseName);
+        return BuildOutputPath(outputDirectory, instanceName, instanceName, warsawNow, databaseName, BackupType.Full);
     }
 
     private static string SanitizeFileName(string name)

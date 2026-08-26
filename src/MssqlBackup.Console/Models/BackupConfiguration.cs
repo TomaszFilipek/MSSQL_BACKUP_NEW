@@ -16,4 +16,5 @@ public class BackupConfiguration
     ];
     public CompressionSettings PostBackupCompression { get; init; } = new();
     public SambaSettings Samba { get; init; } = new();
+    public LocalCopySettings LocalCopy { get; init; } = new();
 }
