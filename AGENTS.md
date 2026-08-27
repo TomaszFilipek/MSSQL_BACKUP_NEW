@@ -215,10 +215,11 @@ var result = await orchestrator.BackupAllDatabasesAsync(server, config, environm
 - Compress, Verify, Duration
 
 ### BackupJob Model (live)
-- EnvironmentName, InstanceName, HostName, Status (Running/Completed/Failed)
+- EnvironmentName, InstanceName, HostName, Status (Running/Completed/Failed), BackupType (Full/Diff)
 - StartedAt, FinishedAt, UpdatedAt (UTC)
 - TotalDatabases, CompletedCount, FailedCount
 - CurrentDatabase, CurrentStep, Message
+- Web: `Jobs.razor` wyświetla `BackupType` jako badge (Full=primary, Diff=warning) w kartach aktywnych + kolumnie w tabeli historii z filtrem Typ
 
 ### Konfiguracja
 - **CORS**: AllowAnyOrigin (dla instancji konsolowych na VPS)

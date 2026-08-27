@@ -55,6 +55,7 @@ public class BackupOrchestrator
                 TotalServers = totalServers,
                 ServerIndex = serverIndex,
                 Status = "Running",
+                BackupType = config.DefaultType.ToString(),
                 StartedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
                 TotalDatabases = 0,

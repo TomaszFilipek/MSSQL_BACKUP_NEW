@@ -39,6 +39,8 @@ public class BackupJob
 
     public string? Message { get; set; }
 
+    public string BackupType { get; set; } = "Full"; // Full | Differential
+
     // Multi-server run info (x / TotalServers)
     public string? ServerName { get; set; }
 

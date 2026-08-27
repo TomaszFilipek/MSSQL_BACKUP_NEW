@@ -121,6 +121,7 @@ public class BackupJobsController : ControllerBase
         existing.InstanceName = job.InstanceName;
         existing.HostName = job.HostName;
         existing.Status = job.Status;
+        existing.BackupType = string.IsNullOrWhiteSpace(job.BackupType) ? existing.BackupType : job.BackupType;
         existing.FinishedAt = job.FinishedAt.HasValue ? DateTime.SpecifyKind(job.FinishedAt.Value, DateTimeKind.Utc) : null;
         existing.UpdatedAt = DateTime.UtcNow;
         existing.TotalDatabases = job.TotalDatabases;
