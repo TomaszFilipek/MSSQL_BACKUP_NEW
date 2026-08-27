@@ -13,11 +13,40 @@ public class BackupJobsController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IHubContext<BackupHub> _hubContext;
+    private readonly IConfiguration _configuration;
 
-    public BackupJobsController(AppDbContext context, IHubContext<BackupHub> hubContext)
+    public BackupJobsController(AppDbContext context, IHubContext<BackupHub> hubContext, IConfiguration configuration)
     {
         _context = context;
         _hubContext = hubContext;
+        _configuration = configuration;
+    }
+
+    private async Task CheckAndMarkStaleJobs()
+    {
+        var staleMinutes = _configuration.GetValue<int>("JobSettings:StaleMinutes", 10);
+        var threshold = DateTime.UtcNow.AddMinutes(-staleMinutes);
+        var stale = await _context.BackupJobs
+            .Where(j => j.Status == "Running" && j.UpdatedAt < threshold)
+            .ToListAsync();
+
+        foreach (var job in stale)
+        {
+            job.Status = "Failed";
+            job.FinishedAt = DateTime.UtcNow;
+            job.CurrentStep = "Abandoned";
+            job.Message = $"Przerwane - brak raportowania > {staleMinutes} min (stale)";
+            job.UpdatedAt = DateTime.UtcNow;
+        }
+
+        if (stale.Count > 0)
+        {
+            await _context.SaveChangesAsync();
+            foreach (var job in stale)
+            {
+                await _hubContext.Clients.All.SendAsync("JobFinished", job);
+            }
+        }
     }
 
     [HttpGet]
@@ -27,6 +56,8 @@ public class BackupJobsController : ControllerBase
         [FromQuery] string? status = null,
         [FromQuery] int take = 50)
     {
+        await CheckAndMarkStaleJobs();
+
         var query = _context.BackupJobs.AsQueryable();
 
         if (!string.IsNullOrEmpty(environment))
@@ -42,6 +73,8 @@ public class BackupJobsController : ControllerBase
     [HttpGet("active")]
     public async Task<ActionResult<IEnumerable<BackupJob>>> GetActiveJobs()
     {
+        await CheckAndMarkStaleJobs();
+
         var active = await _context.BackupJobs
             .Where(j => j.Status == "Running")
             .OrderByDescending(j => j.StartedAt)

@@ -130,7 +130,7 @@ MSSQL_BACKUP_NEW/
 
 ### Kluczowe klasy
 - **BackupService** - wykonuje backupy pojedynczych baz (BACKUP DATABASE)
-- **BackupOrchestrator** - orchestruje backup wszystkich baz + raportuje live status do API (BackupJob), kolejność: backup -> kompresja -> Samba/LocalCopy na końcu, folder `yyyy-MM-dd HH-mm-ss_Full/_Diff`
+- **BackupOrchestrator** - orchestruje backup wszystkich baz + raportuje live status do API (BackupJob), kolejność: backup -> kompresja -> Samba/LocalCopy na końcu, folder `yyyy-MM-dd HH-mm-ss_Full/_Diff`, auto-finalizacja `Failed` przy nieoczekiwanym wyjątku (podwójna ochrona ze stale-check)
 - **BackupApiClient** - klient HTTP do wysyłania rekordów do REST API
 - **BackupJobApiClient** - klient HTTP do raportowania live statusu (BackupJob: Running/Completed)
 - **DatabaseCatalogApiClient** - wysyłka listy baz do API (`POST /api/databases/sync`)
@@ -200,12 +200,14 @@ var result = await orchestrator.BackupAllDatabasesAsync(server, config, environm
 
 | Method | Endpoint | Opis |
 |--------|----------|------|
-| GET | `/api/backupjobs` | Lista (filtry: environment, instance, status, take) |
-| GET | `/api/backupjobs/active` | Tylko `Running` |
+| GET | `/api/backupjobs` | Lista (filtry: environment, instance, status, take) + stale-check (10 min -> `Failed`) |
+| GET | `/api/backupjobs/active` | Tylko `Running` + stale-check |
 | GET | `/api/backupjobs/{id}` | Pojedynczy job |
 | POST | `/api/backupjobs` | Utwórz (broadcast `JobCreated` + `JobUpdated`) |
 | PUT | `/api/backupjobs/{id}` | Aktualizuj (broadcast `JobUpdated`/`JobFinished`) |
 | DELETE | `/api/backupjobs/{id}` | Usuń |
+
+> **Stale-check**: `GET` automatycznie oznacza `Running` bez aktualizacji > `JobSettings:StaleMinutes` (10 min) jako `Failed` + `JobFinished` broadcast. Konsola dodatkowo finalizuje `Failed` w `catch` przy nieoczekiwanym wyjątku (try/finally). Podwójna ochrona przed "wiszącymi" zadaniami.
 
 ### BackupRecord Model
 - EnvironmentName, InstanceName, DatabaseName, BackupType
@@ -280,6 +282,9 @@ dotnet ef database update --project src/MssqlBackup.Api
   "AllowedHosts": "*",
   "ConnectionStrings": {
     "DefaultConnection": "Data Source=MssqlBackup.db"
+  },
+  "JobSettings": {
+    "StaleMinutes": 10
   }
 }
 ```
@@ -296,6 +301,9 @@ dotnet ef database update --project src/MssqlBackup.Api
   },
   "ConnectionStrings": {
     "DefaultConnection": "Data Source=MssqlBackup_Dev.db"
+  },
+  "JobSettings": {
+    "StaleMinutes": 10
   }
 }
 ```
@@ -428,6 +436,7 @@ docker compose logs -f api
 - BackupOrchestrator pomija domyślnie bazy systemowe (master, model, msdb, tempdb)
 - Pliki backupów są zapisywane w `[OutputDirectory]/[EnvironmentName]/[ServerName]/[yyyy-MM-dd HH-mm-ss_Full|_Diff]/` (ta sama struktura lokalnie, na Sambie i w LocalCopy); suffix `_Full`/`_Diff` zgodny z `--type` dla calej operacji
 - Kolejność: `BACKUP DATABASE` -> kompresja 7-Zip -> kopiowanie (Samba/LocalCopy na końcu, oba po kompresji); `--type` (Full/Differential) wspólny dla wszystkich baz/serwerów, domyślnie z `BackupSettings:DefaultType`
+- Wiszące zadania: podwójna ochrona - konsola finalizuje `Failed` w `catch` (outer try w Orchestrator + per-server try w Program), API stale-check `JobSettings:StaleMinutes` (10 min bez `UpdatedAt` -> `Failed` + broadcast `JobFinished`); Web badge >5 min (warning), >10 min (danger)
 - Błędy podczas backupu pojedynczych baz są logowane, a operacja jest kontynuowana
 - W Dockerze API nasłuchuje na porcie 5000 (HTTP)
 - SQL Server w Dockerze używa domyślnie hasła z pliku .env

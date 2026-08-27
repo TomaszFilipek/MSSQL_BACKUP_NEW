@@ -70,25 +70,28 @@ public class BackupOrchestrator
             _logger.LogWarning(ex, "Failed to create job on API - continuing without live reporting");
         }
 
-        List<string> allDatabases;
         try
         {
-            allDatabases = await _backupService.GetDatabasesAsync(server);
-            _logger.LogInformation("Found {Count} databases on server", allDatabases.Count);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to list databases");
-            if (job != null)
+            List<string> allDatabases;
+            try
             {
-                job.Status = "Failed";
-                job.FinishedAt = DateTime.UtcNow;
-                job.CurrentStep = "Failed";
-                job.Message = $"Blad listowania baz: {ex.Message}";
-                await _jobClient.UpdateJobAsync(job);
+                allDatabases = await _backupService.GetDatabasesAsync(server);
+                _logger.LogInformation("Found {Count} databases on server", allDatabases.Count);
             }
-            return new BackupResult { TotalDatabases = 0, FailedBackups = 1, Errors = [new BackupError { DatabaseName = "*", ErrorMessage = ex.Message }] };
-        }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to list databases");
+                if (job != null)
+                {
+                    job.Status = "Failed";
+                    job.FinishedAt = DateTime.UtcNow;
+                    job.CurrentStep = "Failed";
+                    job.Message = $"Blad listowania baz: {ex.Message}";
+                    job.UpdatedAt = DateTime.UtcNow;
+                    try { await _jobClient.UpdateJobAsync(job); } catch { }
+                }
+                return new BackupResult { TotalDatabases = 0, FailedBackups = 1, Errors = [new BackupError { DatabaseName = "*", ErrorMessage = ex.Message }] };
+            }
 
         var databasesToBackup = FilterDatabases(allDatabases, config.ExcludeDatabases);
         _logger.LogInformation("After filtering: {Count} databases to backup", databasesToBackup.Count);
@@ -346,10 +349,32 @@ public class BackupOrchestrator
             await _jobClient.UpdateJobAsync(job);
         }
 
-        _logger.LogInformation("Backup completed: {Successful} successful, {Failed} failed",
-            result.SuccessfulBackups, result.FailedBackups);
+            _logger.LogInformation("Backup completed: {Successful} successful, {Failed} failed",
+                result.SuccessfulBackups, result.FailedBackups);
 
-        return result;
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error during backup of server {Server}", server.Server);
+            if (job != null && job.Status == "Running")
+            {
+                try
+                {
+                    job.Status = "Failed";
+                    job.FinishedAt = DateTime.UtcNow;
+                    job.CurrentStep = "Error";
+                    job.Message = $"Nieoczekiwany błąd: {ex.Message}";
+                    job.UpdatedAt = DateTime.UtcNow;
+                    await _jobClient.UpdateJobAsync(job);
+                }
+                catch (Exception updEx)
+                {
+                    _logger.LogWarning(updEx, "Failed to mark job as Failed");
+                }
+            }
+            throw;
+        }
     }
 
     public static string BuildOutputPath(string outputDirectory, string environmentName, string serverName, DateTime warsawJobTime, string databaseName, BackupType type = BackupType.Full)

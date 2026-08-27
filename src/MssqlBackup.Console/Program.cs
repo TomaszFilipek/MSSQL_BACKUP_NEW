@@ -253,14 +253,24 @@ try
         Console.WriteLine($"=== Server: {srv.Name} ({server.Server}) [{srvIdx + 1}/{servers.Count}] ===");
         Log.Information("Processing server {ServerName} ({Server}) {Index}/{Total}", srv.Name, server.Server, srvIdx + 1, servers.Count);
 
-        var result = await orchestrator.BackupAllDatabasesAsync(server, config, envName, srv.Name, servers.Count, srvIdx + 1);
+        try
+        {
+            var result = await orchestrator.BackupAllDatabasesAsync(server, config, envName, srv.Name, servers.Count, srvIdx + 1);
 
-        totalResult.TotalDatabases += result.TotalDatabases;
-        totalResult.SuccessfulBackups += result.SuccessfulBackups;
-        totalResult.FailedBackups += result.FailedBackups;
-        totalResult.Errors.AddRange(result.Errors);
+            totalResult.TotalDatabases += result.TotalDatabases;
+            totalResult.SuccessfulBackups += result.SuccessfulBackups;
+            totalResult.FailedBackups += result.FailedBackups;
+            totalResult.Errors.AddRange(result.Errors);
 
-        Console.WriteLine($"Server {srv.Name}: {result.SuccessfulBackups}/{result.TotalDatabases} OK, {result.FailedBackups} errors");
+            Console.WriteLine($"Server {srv.Name}: {result.SuccessfulBackups}/{result.TotalDatabases} OK, {result.FailedBackups} errors");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Unexpected error for server {Server}", srv.Name);
+            Console.WriteLine($"Server {srv.Name}: nieoczekiwany błąd - {ex.Message} (job oznaczony jako Failed)");
+            totalResult.FailedBackups++;
+            totalResult.Errors.Add(new BackupError { DatabaseName = $"{srv.Name}/*", ErrorMessage = ex.Message });
+        }
         Console.WriteLine();
     }
 

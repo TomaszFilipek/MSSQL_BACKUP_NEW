@@ -104,6 +104,15 @@ else
                                 <div class="small text-muted mt-2" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="@job.Message">@job.Message</div>
                             }
                             <div class="small text-muted mt-2">Czas: @elapsed.ToString(@"hh\:mm\:ss") | Aktualizacja: @TimeHelper.ToWarsawTime(job.UpdatedAt).ToString("HH:mm:ss")</div>
+                            @{
+                                var staleMin = (DateTime.UtcNow - job.UpdatedAt).TotalMinutes;
+                            }
+                            @if (staleMin > 5)
+                            {
+                                <div class="mt-2">
+                                    <span class="badge @(staleMin > 10 ? "bg-danger" : "bg-warning text-dark")">Brak raportowania od @((int)staleMin) min @(staleMin > 10 ? "- zostanie oznaczone jako Failed" : "")</span>
+                                </div>
+                            }
 
                             <button class="btn btn-sm @(isExpanded ? "btn-secondary" : "btn-outline-primary") mt-3 w-100" @onclick="() => ToggleDatabases(job.Id)">
                                 @(isExpanded ? "Ukryj bazy" : $"Bazy ({job.Databases?.Count ?? job.TotalDatabases})")
@@ -233,7 +242,9 @@ else
                     var duration = job.FinishedAt.HasValue ? job.FinishedAt.Value - job.StartedAt : DateTime.UtcNow - job.StartedAt;
                     var isExp = _expandedJobs.Contains(job.Id);
                     var filteredDbs = GetFilteredDatabases(job);
-                    <tr class="@(job.Status == "Running" ? "table-primary" : "")">
+                    var staleHistMin = (DateTime.UtcNow - job.UpdatedAt).TotalMinutes;
+                    var staleHist = job.Status == "Running" && staleHistMin > 5;
+                    <tr class="@(staleHist ? "table-warning" : job.Status == "Running" ? "table-primary" : "")" title="@(staleHist ? $"Brak raportowania od {(int)staleHistMin} min" : "")">
                         <td class="text-nowrap">@TimeHelper.ToWarsawTime(job.StartedAt).ToString("dd.MM HH:mm:ss")</td>
                         <td><span class="badge bg-info">@job.EnvironmentName</span></td>
                         <td>
