@@ -12,6 +12,8 @@ public class BackupOrchestrator
     private readonly CompressionService _compressionService;
     private readonly SambaService _sambaService;
     private readonly LocalCopyService _localCopyService;
+    private readonly AgeService _ageService;
+    private readonly VpsService _vpsService;
     private readonly ILogger<BackupOrchestrator> _logger;
 
     public BackupOrchestrator(
@@ -21,6 +23,8 @@ public class BackupOrchestrator
         CompressionService compressionService,
         SambaService sambaService,
         LocalCopyService localCopyService,
+        AgeService ageService,
+        VpsService vpsService,
         ILogger<BackupOrchestrator> logger)
     {
         _backupService = backupService;
@@ -29,6 +33,8 @@ public class BackupOrchestrator
         _compressionService = compressionService;
         _sambaService = sambaService;
         _localCopyService = localCopyService;
+        _ageService = ageService;
+        _vpsService = vpsService;
         _logger = logger;
     }
 
@@ -147,10 +153,13 @@ public class BackupOrchestrator
                 await _backupService.BackupAsync(server, options);
                 _logger.LogInformation("Backup of database '{Database}' completed successfully", database);
 
+                var bakPath = outputPath;
                 var finalFilePath = outputPath;
+                string? compressedPath = null;
                 long fileSizeBeforeCompression = new FileInfo(outputPath).Length;
                 long fileSizeAfterCompression = fileSizeBeforeCompression;
 
+                // 2. 7zip (bez hasła) -> .7z
                 if (config.PostBackupCompression.Compress)
                 {
                     if (job != null)
@@ -160,49 +169,98 @@ public class BackupOrchestrator
                         await _jobClient.UpdateJobAsync(job);
                     }
                     await _compressionService.CompressFileAsync(outputPath, config.PostBackupCompression);
-                    finalFilePath = outputPath + ".7z";
+                    compressedPath = outputPath + ".7z";
+                    finalFilePath = compressedPath;
                     fileSizeAfterCompression = new FileInfo(finalFilePath).Length;
                     _logger.LogInformation("Compression of backup '{Database}' completed successfully. Before: {Before} bytes, After: {After} bytes",
                         database, fileSizeBeforeCompression, fileSizeAfterCompression);
 
-                    if (config.PostBackupCompression.DeleteSourceAfterCompress && File.Exists(outputPath))
+                    if (config.PostBackupCompression.DeleteSourceAfterCompress && File.Exists(bakPath))
                     {
                         try
                         {
-                            File.Delete(outputPath);
-                            _logger.LogInformation("Deleted source file after compression: {File}", outputPath);
+                            File.Delete(bakPath);
+                            _logger.LogInformation("Deleted source file after compression: {File}", bakPath);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Failed to delete source file {File}", outputPath);
+                            _logger.LogWarning(ex, "Failed to delete source file {File}", bakPath);
                         }
                     }
                 }
 
-                // Kopia do celow zewnetrznych - zawsze na koncu po kompresji
-                var sambaEnabled = config.Samba.Enabled;
+                // 3. kopiowanie na zasob lokalny (dysk usb) - PRZED age, kopiuje .7z/.bak niezaszyfrowany
+                string? localDestPath = null;
                 var localEnabled = config.LocalCopy.Enabled && !string.IsNullOrWhiteSpace(config.LocalCopy.DestinationPath);
-                var bothCopyEnabled = sambaEnabled && localEnabled;
-
-                if (sambaEnabled || localEnabled)
+                if (localEnabled)
                 {
-                    var sourceForCopy = finalFilePath;
-                    string? sambaDestPath = null;
-                    string? localDestPath = null;
+                    if (job != null)
+                    {
+                        job.CurrentStep = "Copying to local folder";
+                        job.Message = $"Kopiowanie {database} do folderu lokalnego";
+                        await _jobClient.UpdateJobAsync(job);
+                    }
+                    _logger.LogInformation("Copying backup '{Database}' to local folder (pre-age)", database);
+                    var safeServerLocal = SanitizeFileName(serverName ?? server.Server);
+                    var localFolder = Path.Combine(config.LocalCopy.DestinationPath, environmentName, safeServerLocal, jobTimestampFolder);
+                    localDestPath = Path.Combine(localFolder, Path.GetFileName(finalFilePath));
+                    // Odloz usuwanie zrodla jesli potrzebne dla age lub remote copy
+                    var needSourceLater = config.Age.Enabled || config.Samba.Enabled || config.Vps.Enabled;
+                    var localSettingsForCopy = needSourceLater
+                        ? new LocalCopySettings
+                        {
+                            Enabled = config.LocalCopy.Enabled,
+                            DestinationPath = config.LocalCopy.DestinationPath,
+                            DeleteSourceAfterCopy = false
+                        }
+                        : config.LocalCopy;
+                    await _localCopyService.CopyAsync(finalFilePath, localDestPath, localSettingsForCopy);
+                }
 
+                // 4. age (z -r) -> .age
+                string? ageFilePath = null;
+                long fileSizeAfterAge = fileSizeAfterCompression;
+                if (config.Age.Enabled)
+                {
+                    if (job != null)
+                    {
+                        job.CurrentStep = "Encrypting (age)";
+                        job.Message = $"Szyfrowanie {database} (age)";
+                        await _jobClient.UpdateJobAsync(job);
+                    }
+                    _logger.LogInformation("Encrypting backup '{Database}' with age", database);
+                    ageFilePath = await _ageService.EncryptFileAsync(finalFilePath, config.Age);
+                    fileSizeAfterAge = new FileInfo(ageFilePath).Length;
+                    _logger.LogInformation("Age encryption of backup '{Database}' completed. Before: {Before} bytes, After: {After} bytes",
+                        database, fileSizeAfterCompression, fileSizeAfterAge);
+                }
+
+                // 5. kopiowanie zaszyfrowanego na VPS lub Sambe (w zaleznosci od konfiguracji) - PO age
+                var sambaEnabled = config.Samba.Enabled && !string.IsNullOrWhiteSpace(config.Samba.SharePath);
+                var vpsEnabled = config.Vps.Enabled && !string.IsNullOrWhiteSpace(config.Vps.Host) && !string.IsNullOrWhiteSpace(config.Vps.RemotePath);
+                var sourceForRemote = ageFilePath ?? finalFilePath;
+                string? sambaDestPath = null;
+                string? vpsRemotePath = null;
+                bool sambaSuccess = false;
+                bool vpsSuccess = false;
+
+                if (sambaEnabled || vpsEnabled)
+                {
+                    // Samba (encrypted if age enabled)
                     if (sambaEnabled)
                     {
                         if (job != null)
                         {
                             job.CurrentStep = "Copying to Samba";
-                            job.Message = $"Kopiowanie {database} na Samba";
+                            job.Message = $"Kopiowanie {database} na Samba{(ageFilePath != null ? " (zaszyfrowany)" : "")}";
                             await _jobClient.UpdateJobAsync(job);
                         }
-                        _logger.LogInformation("Copying backup '{Database}' to Samba share", database);
+                        _logger.LogInformation("Copying backup '{Database}' to Samba share (source: {Source})", database, sourceForRemote);
                         var safeServerSamba = SanitizeFileName(serverName ?? server.Server);
                         var sambaFolder = Path.Combine(config.Samba.SharePath, environmentName, safeServerSamba, jobTimestampFolder);
-                        sambaDestPath = Path.Combine(sambaFolder, Path.GetFileName(finalFilePath));
-                        var sambaSettingsForCopy = bothCopyEnabled
+                        sambaDestPath = Path.Combine(sambaFolder, Path.GetFileName(sourceForRemote));
+                        var bothRemoteEnabled = sambaEnabled && vpsEnabled;
+                        var sambaSettingsForCopy = bothRemoteEnabled && (config.Samba.DeleteSourceAfterCopy || config.Vps.DeleteSourceAfterCopy)
                             ? new SambaSettings
                             {
                                 Enabled = config.Samba.Enabled,
@@ -214,59 +272,78 @@ public class BackupOrchestrator
                                 CreateOkFile = config.Samba.CreateOkFile
                             }
                             : config.Samba;
-                        await _sambaService.CopyToShareAsync(finalFilePath, sambaDestPath, sambaSettingsForCopy);
+                        await _sambaService.CopyToShareAsync(sourceForRemote, sambaDestPath, sambaSettingsForCopy);
+                        sambaSuccess = true;
                     }
 
-                    if (localEnabled)
+                    // VPS (encrypted if age enabled, via SCP)
+                    if (vpsEnabled)
                     {
                         if (job != null)
                         {
-                            job.CurrentStep = sambaEnabled ? "Copying to local folder" : "Copying to local folder";
-                            job.Message = $"Kopiowanie {database} do folderu lokalnego";
+                            job.CurrentStep = "Copying to VPS";
+                            job.Message = $"Kopiowanie {database} na VPS{(ageFilePath != null ? " (zaszyfrowany)" : "")}";
                             await _jobClient.UpdateJobAsync(job);
                         }
-                        _logger.LogInformation("Copying backup '{Database}' to local folder", database);
-                        var safeServerLocal = SanitizeFileName(serverName ?? server.Server);
-                        var localFolder = Path.Combine(config.LocalCopy.DestinationPath, environmentName, safeServerLocal, jobTimestampFolder);
-                        localDestPath = Path.Combine(localFolder, Path.GetFileName(sourceForCopy));
-                        var localSettingsForCopy = bothCopyEnabled
-                            ? new LocalCopySettings
-                            {
-                                Enabled = config.LocalCopy.Enabled,
-                                DestinationPath = config.LocalCopy.DestinationPath,
-                                DeleteSourceAfterCopy = false
-                            }
-                            : config.LocalCopy;
-                        await _localCopyService.CopyAsync(sourceForCopy, localDestPath, localSettingsForCopy);
+                        _logger.LogInformation("Copying backup '{Database}' to VPS {Host}:{RemotePath} (source: {Source})", database, config.Vps.Host, config.Vps.RemotePath, sourceForRemote);
+                        var safeServerVps = SanitizeFileName(serverName ?? server.Server);
+                        var vpsFolder = $"{config.Vps.RemotePath.TrimEnd('/')}/{environmentName}/{safeServerVps}/{jobTimestampFolder}";
+                        vpsRemotePath = $"{vpsFolder}/{Path.GetFileName(sourceForRemote)}";
+                        await _vpsService.CopyToVpsAsync(sourceForRemote, vpsRemotePath, config.Vps);
+                        vpsSuccess = true;
                     }
 
-                    if (bothCopyEnabled && (config.Samba.DeleteSourceAfterCopy || config.LocalCopy.DeleteSourceAfterCopy))
+                    // Rekord wskazuje na docelowa lokalizacje remote (preferuj VPS gdy oba)
+                    if (vpsSuccess && vpsRemotePath != null) finalFilePath = vpsRemotePath;
+                    else if (sambaSuccess && sambaDestPath != null) finalFilePath = sambaDestPath;
+                    else if (ageFilePath != null) finalFilePath = ageFilePath;
+
+                    // 6. usuniecie age, 7zip, bak - po udanym VPS/Samba, usuń wszystkie intermediates z OutputDirectory
+                    var needCleanup = (sambaSuccess && config.Samba.DeleteSourceAfterCopy) || (vpsSuccess && config.Vps.DeleteSourceAfterCopy);
+                    if (needCleanup)
                     {
-                        try
+                        // Usuń w kolejności: .age, .7z, .bak (nie ruszaj kopii USB w DestinationPath)
+                        var filesToDelete = new List<string>();
+                        if (ageFilePath != null && File.Exists(ageFilePath)) filesToDelete.Add(ageFilePath);
+                        if (compressedPath != null && File.Exists(compressedPath)) filesToDelete.Add(compressedPath);
+                        else if (ageFilePath == null && File.Exists(finalFilePath) && finalFilePath.EndsWith(".7z", StringComparison.OrdinalIgnoreCase)) { /* already handled */ }
+                        if (File.Exists(bakPath)) filesToDelete.Add(bakPath);
+
+                        // Uniknij duplikatów (gdy sourceForRemote == compressedPath etc.)
+                        filesToDelete = filesToDelete.Distinct().ToList();
+
+                        foreach (var fileToDelete in filesToDelete)
                         {
-                            if (File.Exists(sourceForCopy))
+                            try
                             {
-                                File.Delete(sourceForCopy);
-                                _logger.LogInformation("Deleted source file after copies: {File}", sourceForCopy);
-                                if (config.Samba.CreateOkFile)
+                                if (File.Exists(fileToDelete))
                                 {
-                                    var okFile = sourceForCopy + ".ok";
-                                    File.WriteAllText(okFile, $"Moved to Samba/LocalCopy: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                                    File.Delete(fileToDelete);
+                                    _logger.LogInformation("Deleted intermediate file after remote copy: {File}", fileToDelete);
                                 }
                             }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to delete intermediate file {File} after remote copy", fileToDelete);
+                            }
                         }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to delete source file {File} after copies", sourceForCopy);
-                        }
-                    }
 
-                    // Rekord wskazuje na docelowa lokalizacje (preferuj Samba gdy oba)
-                    if (sambaDestPath != null) finalFilePath = sambaDestPath;
-                    else if (localDestPath != null) finalFilePath = localDestPath;
+                        // Jesli LocalCopy bylo odlozone (DeleteSourceAfterCopy oryginalnie true), a teraz remote sie powiodl, usun tez zrodlo ktore juz jest w filesToDelete - juz handled
+                        // Dodatkowo: jesli finalFilePath byl lokalny a teraz usunietyz, finalFilePath pozostaje jako remote path dla rekordu
+
+                        // Po usunieciu intermediates, upewnij sie ze katalog nie jest pusty? nie usuwamy katalogu
+                    }
+                }
+                else
+                {
+                    // Brak remote - jesli age, rekord wskazuje na .age lokalnie; jesli tylko local copy, rekord wskazuje na USB
+                    if (ageFilePath != null) finalFilePath = ageFilePath;
+                    else if (localDestPath != null && !config.Age.Enabled) finalFilePath = localDestPath;
                 }
 
                 stopwatch.Stop();
+
+                var fileSizeForRecord = ageFilePath != null ? fileSizeAfterAge : fileSizeAfterCompression;
 
                 var record = new BackupRecordDto
                 {
@@ -275,9 +352,9 @@ public class BackupOrchestrator
                     DatabaseName = database,
                     BackupType = config.DefaultType.ToString(),
                     OutputFilePath = finalFilePath,
-                    FileSize = fileSizeAfterCompression,
+                    FileSize = fileSizeForRecord,
                     FileSizeBeforeCompression = fileSizeBeforeCompression,
-                    FileSizeAfterCompression = fileSizeAfterCompression,
+                    FileSizeAfterCompression = fileSizeAfterAge != fileSizeAfterCompression ? fileSizeAfterAge : fileSizeAfterCompression,
                     BackupDate = DateTime.UtcNow,
                     Compress = config.Compress || config.PostBackupCompression.Compress,
                     Verify = config.Verify,
@@ -302,7 +379,7 @@ public class BackupOrchestrator
                     if (dbOk != null)
                     {
                         dbOk.Status = "Completed";
-                        dbOk.FileSize = fileSizeAfterCompression;
+                        dbOk.FileSize = fileSizeForRecord;
                         dbOk.DurationSeconds = stopwatch.Elapsed.TotalSeconds;
                     }
                     job.CurrentStep = "Done";

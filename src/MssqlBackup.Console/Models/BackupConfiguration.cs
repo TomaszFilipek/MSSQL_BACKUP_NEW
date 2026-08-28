@@ -17,4 +17,6 @@ public class BackupConfiguration
     public CompressionSettings PostBackupCompression { get; init; } = new();
     public SambaSettings Samba { get; init; } = new();
     public LocalCopySettings LocalCopy { get; init; } = new();
+    public AgeSettings Age { get; init; } = new();
+    public VpsSettings Vps { get; init; } = new();
 }

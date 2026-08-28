@@ -48,6 +48,13 @@ string? GetArg(string name)
     return null;
 }
 
+string MaskRecipient(string r)
+{
+    if (string.IsNullOrWhiteSpace(r)) return "(empty)";
+    if (r.Length <= 12) return r;
+    return r[..8] + "***" + r[^4..];
+}
+
 try
 {
     var apiSettings = new ApiSettings();
@@ -64,6 +71,12 @@ try
 
     var localCopySettings = new LocalCopySettings();
     configuration.GetSection("LocalCopySettings").Bind(localCopySettings);
+
+    var ageSettings = new AgeSettings();
+    configuration.GetSection("AgeSettings").Bind(ageSettings);
+
+    var vpsSettings = new VpsSettings();
+    configuration.GetSection("VpsSettings").Bind(vpsSettings);
 
     // Load servers: prefer "Servers" array, fallback to legacy "ServerSettings"
     var servers = configuration.GetSection("Servers").Get<List<NamedServerSettings>>();
@@ -133,7 +146,7 @@ try
         Console.WriteLine("    --type <Full|Diff>        Typ backupu dla calej operacji (domyslnie z BackupSettings:DefaultType)");
         Console.WriteLine("    --sync-databases [server] Wysyla liste baz do API (drugi param = nazwa serwera, jesli brak to wszystkie)");
         Console.WriteLine("    --catalog, --sync-catalog Alias dla --sync-databases");
-        Console.WriteLine("  Uwagi: kolejność zawsze: BACKUP -> kompresja (jesli wlaczona) -> Samba/LocalCopy (na koncu)");
+        Console.WriteLine("  Uwagi: kolejność zawsze: BACKUP -> 7zip (bez hasła) -> LocalCopy (USB, przed age) -> age -r -> Samba/VPS (zaszyfrowany, po age) -> usuniecie .bak/.7z/.age");
         Console.WriteLine("         Folder z datą zawiera suffix typu: yyyy-MM-dd HH-mm-ss_Full | yyyy-MM-dd HH-mm-ss_Diff");
         Console.WriteLine("  Dostepne serwery:");
         foreach (var s in servers!)
@@ -180,6 +193,8 @@ try
     services.AddTransient<CompressionService>();
     services.AddTransient<SambaService>();
     services.AddTransient<LocalCopyService>();
+    services.AddTransient<AgeService>();
+    services.AddTransient<VpsService>();
     services.AddTransient<BackupOrchestrator>();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -226,7 +241,9 @@ try
         ExcludeDatabases = backupSettings.ExcludeDatabases,
         PostBackupCompression = compressionSettings,
         Samba = sambaSettings,
-        LocalCopy = localCopySettings
+        LocalCopy = localCopySettings,
+        Age = ageSettings,
+        Vps = vpsSettings
     };
 
     Console.WriteLine("MssqlBackup.Console - Backup Orchestrator");
@@ -234,9 +251,14 @@ try
     Console.WriteLine($"API: {apiSettings.BaseUrl}");
     Console.WriteLine($"Backup type: {config.DefaultType} {(typeArg != null ? "(z --type)" : "(z configu)")}");
     Console.WriteLine($"Output: {config.OutputDirectory} / {{ENV}}/{{SERVER}}/{{yyyy-MM-dd HH-mm-ss}}_{(config.DefaultType == BackupType.Differential ? "Diff" : "Full")}");
-    Console.WriteLine($"Post-backup compression: {config.PostBackupCompression.Compress} (delete source: {config.PostBackupCompression.DeleteSourceAfterCompress})");
-    Console.WriteLine($"Samba share: {(config.Samba.Enabled ? config.Samba.SharePath : "disabled")} (same structure)");
-    Console.WriteLine($"Local copy: {(config.LocalCopy.Enabled ? config.LocalCopy.DestinationPath : "disabled")} (same structure, always after compression)");
+    Console.WriteLine($"Post-backup compression: {config.PostBackupCompression.Compress} (delete source: {config.PostBackupCompression.DeleteSourceAfterCompress}) (7zip bez hasla - age uzywa -r)");
+    Console.WriteLine($"Local copy (USB, przed age): {(config.LocalCopy.Enabled ? config.LocalCopy.DestinationPath : "disabled")} (kopiuje .7z przed szyfrowaniem, zachowuje niezaszyfrowany na USB)");
+    Console.WriteLine($"Age encryption: {(config.Age.Enabled ? $"enabled (recipient: {MaskRecipient(config.Age.Recipient)})" : "disabled")} (age -r, szyfruje .7z -> .age, kopiuje zaszyfrowany na VPS/Samba)");
+    Console.WriteLine($"Samba (po age, zaszyfrowany): {(config.Samba.Enabled ? config.Samba.SharePath : "disabled")} (kopiuje .age jesli age wlaczony, inaczej .7z)");
+    Console.WriteLine($"VPS (po age, zaszyfrowany): {(config.Vps.Enabled ? $"{config.Vps.Username}@{config.Vps.Host}:{config.Vps.RemotePath} (port {config.Vps.Port}, key: {(string.IsNullOrWhiteSpace(config.Vps.PrivateKeyPath) ? "password" : config.Vps.PrivateKeyPath)})" : "disabled")} (SCP via scp/pscp, kopiuje .age)");
+    var cleanupEnabled = (config.Vps.Enabled && config.Vps.DeleteSourceAfterCopy) || (config.Samba.Enabled && config.Samba.DeleteSourceAfterCopy);
+    Console.WriteLine($"Cleanup po VPS/Samba: {(cleanupEnabled ? "usuwa .bak/.7z/.age z OutputDirectory po udanym upload" : "zachowuje intermediates (DeleteSourceAfterCopy=false lub brak remote)")}");
+    Console.WriteLine($"Flow: BACKUP -> 7zip -> LocalCopy(USB, o ile Enabled) -> age -r (o ile Enabled) -> VPS/Samba(encrypted, o ile Enabled) -> delete intermediates");
     Console.WriteLine($"Log file: {Path.Combine(logDir, "backup-.log")} (retention 14 days)");
     Console.WriteLine($"Serwery do przetworzenia: {servers!.Count} ({string.Join(", ", servers.Select(s => s.Name))})");
     if (!string.IsNullOrWhiteSpace(requestedServer))

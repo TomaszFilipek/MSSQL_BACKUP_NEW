@@ -78,12 +78,12 @@ MSSQL_BACKUP_NEW/
     └── MssqlBackup.Console/          # Aplikacja konsolowa (.NET 9 console)
         ├── MssqlBackup.Console.csproj
         ├── Program.cs                # Serilog file logging 14d rotation + --server/--type/--sync-databases
-        ├── appsettings.json           # Konfiguracja API, serwera, backupu, kompresji, Samba, LocalCopy
+        ├── appsettings.json           # Konfiguracja API, serwera, backupu, kompresji, Samba, LocalCopy, Age, Vps
         ├── appsettings.Local.json     # Local overrides (gitignored)
         ├── Models/
         │   ├── BackupType.cs         # Full, Differential
         │   ├── BackupOptions.cs
-        │   ├── BackupConfiguration.cs  # + LocalCopy
+        │   ├── BackupConfiguration.cs  # + LocalCopy + Age + Vps
         │   ├── BackupSettings.cs
         │   ├── ServerConnection.cs
         │   ├── ServerSettings.cs
@@ -95,16 +95,20 @@ MSSQL_BACKUP_NEW/
         │   ├── BackupJobDto.cs       # DTO live statusu
         │   ├── CompressionSettings.cs # + DeleteSourceAfterCompress
         │   ├── SambaSettings.cs
-        │   └── LocalCopySettings.cs
+        │   ├── LocalCopySettings.cs
+        │   ├── AgeSettings.cs        # Enabled, Recipient (-r), RecipientsFile, AgePath
+        │   └── VpsSettings.cs        # Enabled, Host, Port, Username, PrivateKeyPath, RemotePath
         └── Services/
             ├── BackupService.cs
-            ├── BackupOrchestrator.cs  # Raportuje progress do API (BackupJob), folder _Full/_Diff, kopiowanie na koncu
+            ├── BackupOrchestrator.cs  # Raportuje progress do API (BackupJob), flow: backup -> 7zip -> USB -> age -> VPS/Samba -> cleanup
             ├── BackupApiClient.cs
             ├── BackupJobApiClient.cs  # Klient HTTP dla BackupJobs
             ├── DatabaseCatalogApiClient.cs
-            ├── CompressionService.cs
+            ├── CompressionService.cs   # 7-Zip (bez hasla - age uzywa -r)
             ├── SambaService.cs
-            └── LocalCopyService.cs
+            ├── LocalCopyService.cs     # Kopia na USB/przed age (niezaszyfrowana, .7z)
+            ├── AgeService.cs           # age -r recipient (--encrypt -r age1... -o .age)
+            └── VpsService.cs           # SCP (scp/pscp) na VPS (zaszyfrowany .age, mkdir -p)
 ```
 
 ## Key Technical Decisions
@@ -130,21 +134,25 @@ MSSQL_BACKUP_NEW/
 
 ### Kluczowe klasy
 - **BackupService** - wykonuje backupy pojedynczych baz (BACKUP DATABASE)
-- **BackupOrchestrator** - orchestruje backup wszystkich baz + raportuje live status do API (BackupJob), kolejność: backup -> kompresja -> Samba/LocalCopy na końcu, folder `yyyy-MM-dd HH-mm-ss_Full/_Diff`, auto-finalizacja `Failed` przy nieoczekiwanym wyjątku (podwójna ochrona ze stale-check)
+- **BackupOrchestrator** - orchestruje backup wszystkich baz + raportuje live status do API (BackupJob), kolejność: backup -> 7zip (bez hasla) -> USB (LocalCopy, przed age) -> age -r -> VPS/Samba (zaszyfrowany, po age) -> delete .bak/.7z/.age, folder `yyyy-MM-dd HH-mm-ss_Full/_Diff`, auto-finalizacja `Failed` przy nieoczekiwanym wyjątku (podwójna ochrona ze stale-check)
 - **BackupApiClient** - klient HTTP do wysyłania rekordów do REST API
 - **BackupJobApiClient** - klient HTTP do raportowania live statusu (BackupJob: Running/Completed)
 - **DatabaseCatalogApiClient** - wysyłka listy baz do API (`POST /api/databases/sync`)
-- **CompressionService** - kompresja plików 7-Zip (z obsługą hasła + DeleteSourceAfterCompress)
-- **SambaService** - wysyłka backupów na udziały sieciowe Samba
-- **LocalCopyService** - kopia backupu/archiwum do folderu lokalnego (inny dysk)
+- **CompressionService** - kompresja plików 7-Zip (bez hasla - age uzywa -r, + DeleteSourceAfterCompress)
+- **SambaService** - wysyłka backupów na udziały sieciowe Samba (po age, zaszyfrowany .age jesli Age.Enabled)
+- **LocalCopyService** - kopia backupu/archiwum do folderu lokalnego (USB, przed age, niezaszyfrowana .7z, zawsze przed szyfrowaniem)
+- **AgeService** - szyfrowanie age (--encrypt -r <recipient> -o .age), szuka age.exe w PATH + znanych sciezkach, waliduje rozmiar po szyfrowaniu
+- **VpsService** - wysylka zaszyfrowanego .age na VPS via SCP (scp.exe OpenSSH lub pscp.exe PuTTY, mkdir -p przez ssh/plink, BatchMode=yes)
 - **ServerConnection** - dane połączenia (Server, Username, Password, UseWindowsAuth)
-- **BackupConfiguration** - konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify, Samba, LocalCopy)
+- **BackupConfiguration** - konfiguracja orchestratora (OutputDirectory, ExcludeDatabases, Compress, Verify, Samba, LocalCopy, Age, Vps)
 - **BackupOptions** - parametry backupu (DatabaseName, OutputPath, Type, Compress, Verify)
 - **BackupResult** - wynik operacji (TotalDatabases, SuccessfulBackups, FailedBackups, Errors)
 - **ApiSettings** - ustawienia API (BaseUrl, EnvironmentName)
-- **CompressionSettings** - ustawienia kompresji (Compress, Password, CompressionLevel, DeleteSourceAfterCompress)
-- **SambaSettings** - ustawienia Samba (Enabled, SharePath, DeleteSourceAfterCopy, CreateOkFile)
-- **LocalCopySettings** - kopiowanie lokalne (Enabled, DestinationPath, DeleteSourceAfterCopy)
+- **CompressionSettings** - ustawienia kompresji (Compress, Password (puste gdy age), CompressionLevel, DeleteSourceAfterCompress)
+- **SambaSettings** - ustawienia Samba (Enabled, SharePath, DeleteSourceAfterCopy, CreateOkFile) - kopiuje .age jesli Age.Enabled
+- **LocalCopySettings** - kopiowanie lokalne (Enabled, DestinationPath, DeleteSourceAfterCopy) - zawsze PRZED age (USB niezaszyfrowany)
+- **AgeSettings** - szyfrowanie age (Enabled, Recipient age1..., RecipientsFile, AgePath=age)
+- **VpsSettings** - VPS SCP (Enabled, Host, Port=22, Username, PrivateKeyPath, RemotePath=/mnt/backups, DeleteSourceAfterCopy=true)
 
 ### Przykład użycia
 ```csharp
@@ -161,22 +169,38 @@ var config = new BackupConfiguration
     PostBackupCompression = new CompressionSettings
     {
         Compress = true,
-        Password = "MySecretPassword123",
+        Password = "", // puste - szyfrowanie robi age -r, nie 7zip
         CompressionLevel = "Normal",
-        DeleteSourceAfterCompress = true
-    },
-    Samba = new SambaSettings
-    {
-        Enabled = true,
-        SharePath = @"\\192.168.1.2\backups",
-        DeleteSourceAfterCopy = true,
-        CreateOkFile = true
+        DeleteSourceAfterCompress = false // zostanie usuniety po age+VPS
     },
     LocalCopy = new LocalCopySettings
     {
         Enabled = true,
-        DestinationPath = @"D:\BackupsMirror\MSSQL",
+        DestinationPath = @"E:\USB\Backups", // USB: kopia .7z PRZED age (niezaszyfrowana)
         DeleteSourceAfterCopy = false
+    },
+    Age = new AgeSettings
+    {
+        Enabled = true,
+        Recipient = "age1ql3z7hj432v2jl2z8alunwwun8ap59a43lfcw80h9pazq6zv7jqs8j4p5l", // public key
+        AgePath = "age"
+    },
+    Samba = new SambaSettings
+    {
+        Enabled = false, // lub true: kopiuje .age (zaszyfrowany) po age
+        SharePath = @"\\192.168.1.2\backups",
+        DeleteSourceAfterCopy = true,
+        CreateOkFile = true
+    },
+    Vps = new VpsSettings
+    {
+        Enabled = true,
+        Host = "192.168.1.100",
+        Port = 22,
+        Username = "tomasz",
+        PrivateKeyPath = @"C:\Users\tomasz\.ssh\id_ed25519",
+        RemotePath = "/mnt/backups",
+        DeleteSourceAfterCopy = true // po udanym SCP usuwa .age/.7z/.bak z OutputDirectory
     }
 };
 
@@ -352,6 +376,22 @@ dotnet ef database update --project src/MssqlBackup.Api
     "Enabled": false,
     "DestinationPath": "D:\\BackupsMirror\\MSSQL",
     "DeleteSourceAfterCopy": false
+  },
+  "AgeSettings": {
+    "Enabled": false,
+    "Recipient": "age1ql3z7hj432v2jl2z8alunwwun8ap59a43lfcw80h9pazq6zv7jqs8j4p5l",
+    "RecipientsFile": null,
+    "AgePath": "age"
+  },
+  "VpsSettings": {
+    "Enabled": false,
+    "Host": "192.168.1.100",
+    "Port": 22,
+    "Username": "tomasz",
+    "PrivateKeyPath": "C:\\Users\\tomasz\\.ssh\\id_ed25519",
+    "Password": null,
+    "RemotePath": "/mnt/backups",
+    "DeleteSourceAfterCopy": true
   }
 }
 ```
@@ -384,6 +424,12 @@ configuration.GetSection("SambaSettings").Bind(sambaSettings);
 
 var localCopySettings = new LocalCopySettings();
 configuration.GetSection("LocalCopySettings").Bind(localCopySettings);
+
+var ageSettings = new AgeSettings();
+configuration.GetSection("AgeSettings").Bind(ageSettings);
+
+var vpsSettings = new VpsSettings();
+configuration.GetSection("VpsSettings").Bind(vpsSettings);
 ```
 
 ## Docker
@@ -437,6 +483,9 @@ docker compose logs -f api
 - BackupOrchestrator pomija domyślnie bazy systemowe (master, model, msdb, tempdb)
 - Pliki backupów są zapisywane w `[OutputDirectory]/[EnvironmentName]/[ServerName]/[yyyy-MM-dd HH-mm-ss_Full|_Diff]/` (ta sama struktura lokalnie, na Sambie i w LocalCopy); suffix `_Full`/`_Diff` zgodny z `--type` dla calej operacji
 - Kolejność: `BACKUP DATABASE` -> kompresja 7-Zip -> kopiowanie (Samba/LocalCopy na końcu, oba po kompresji); `--type` (Full/Differential) wspólny dla wszystkich baz/serwerów, domyślnie z `BackupSettings:DefaultType`
+- Flow z age/VPS: `BACKUP` -> 7zip (bez hasla) -> USB (LocalCopy, przed age, niezaszyfrowany .7z) -> age -r (szyfruje .7z -> .7z.age) -> VPS/Samba (zaszyfrowany .age, po age) -> delete .bak/.7z/.age z OutputDirectory (o ile Vps/Samba DeleteSourceAfterCopy); struktura folderu `yyyy-MM-dd HH-mm-ss_Full/_Diff` ta sama lokalnie, na Sambie, w LocalCopy i na VPS (`RemotePath/ENV/Server/folder/`)
+- Age: wymaga binarki `age` (https://github.com/FiloSottile/age/releases) na Windows w PATH lub `AgeSettings:AgePath`; VPS Ubuntu: `sudo apt install age`; klucz publiczny `age1...` w `AgeSettings:Recipient`
+- VPS: wymaga `scp` (OpenSSH C:\Windows\System32\OpenSSH\scp.exe) lub `pscp` (PuTTY) + `ssh`/`plink` dla `mkdir -p`; Ubuntu VPS: `sudo apt install openssh-server`, katalog `RemotePath` (np. `/mnt/backups`) + klucz SSH `C:\Users\tomasz\.ssh\id_ed25519` -> `ssh-copy-id` na VPS; auth via `VpsSettings:PrivateKeyPath` (OpenSSH format), BatchMode=yes
 - Wiszące zadania: podwójna ochrona - konsola finalizuje `Failed` w `catch` (outer try w Orchestrator + per-server try w Program), API stale-check `JobSettings:StaleMinutes` (10 min bez `UpdatedAt` -> `Failed` + broadcast `JobFinished`); Web badge >5 min (warning), >10 min (danger)
 - Błędy podczas backupu pojedynczych baz są logowane, a operacja jest kontynuowana
 - W Dockerze API nasłuchuje na porcie 5000 (HTTP)
