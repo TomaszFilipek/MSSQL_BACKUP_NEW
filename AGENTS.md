@@ -282,6 +282,10 @@ dotnet run --project src/MssqlBackup.Console -- --server PROD-01 --type Differen
 # Sync katalogu baz (bez backupu) - wszystkie lub wskazany serwer
 dotnet run --project src/MssqlBackup.Console -- --sync-databases
 dotnet run --project src/MssqlBackup.Console -- --sync-databases PROD-01
+
+# Test polaczenia z VPS (SCP) - wysyla pojedynczy plik testowy, nie wymaga wlaczania Vps:Enabled
+dotnet run --project src/MssqlBackup.Console -- --test-vps
+dotnet run --project src/MssqlBackup.Console -- --test-vps C:\temp\plik_testowy.txt
 ```
 
 ### EF Core Migrations
